@@ -19,7 +19,7 @@ defineModule(sim, list(
     "PredictiveEcology/LandR@development (>= 1.1.1)",
     "PredictiveEcology/LandWebUtils@development (>= 0.1.5)",
     "FOR-CAST/nrvtools (>= 0.0.21)",
-    "PredictiveEcology/pemisc@development (>= 0.0.4.9011)",
+    "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
     "PredictiveEcology/SpaDES.core@development (>= 3.0.3.9000)"
   ),
   parameters = bindrows(
