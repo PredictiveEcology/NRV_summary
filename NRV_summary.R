@@ -58,7 +58,7 @@ defineModule(sim, list(
     defineParameter("summaryPeriod", "integer", start(sim) + c(700L, 1000L), NA, NA,
                     "lower and upper end of the range of simulation times used for summary analyses."),
     defineParameter("timeSeriesTimes", "numeric", start(sim) + 601:650, NA, NA,
-                    "simulation times for which to build time steries animations."),
+                    "simulation times for which to build time series animations."),
     defineParameter("vegLeadingProportion", "numeric", 0.8, 0.0, 1.0,
                     "a number that defines whether a species is leading for a given pixel"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -274,78 +274,113 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
 InitMulti <- function(sim) {
   ## check for necessary output files -----------------------------------------------
   ## NOTE: don't load simLists -- slow and unreliable
-  allReps <- sprintf("rep%02d", P(sim)$reps)
+  mod$useOutputs <- NROW(sim$outputsDF) > 0
+  if (mod$useOutputs) {
+    reps_str <- sub(".*/rep(\\d+)/.*", "\\1", sim$outputsDF$file)
+    mod$allReps <- paste0("rep", sort(unique(reps_str[as.integer(reps_str) %in% Par$reps])))
+    
+  } else {
+    mod$allReps <- sprintf("rep%02d", P(sim)$reps)
+  }
+  if (all(is.na(P(sim)$simTimes))) {
+    P(sim)$simTimes <- unlist(times(sim)[c("start", "end")])
+  }
+  
   padL <- ceiling(log10(P(sim)$simTimes[2] + 1))
   padYearStart <- paddedFloatToChar(P(sim)$simTimes[1], padL = padL)
   padYearEnd <- paddedFloatToChar(P(sim)$simTimes[2], padL = padL)
 
   ## all reps have same flammable map
-  mod$flm <- file.path(outputPath(sim), allReps[1], paste0("flammableMap_year", padYearEnd, ".tif"))
+  ## all reps have same flammable map
+  if (mod$useOutputs) {
+    mod$flm <- unique(grep("flammable", sim$outputsDF$file, value = TRUE))
+    mod$flm <- grep(mod$allReps[1], mod$flm, value = TRUE)
+  } else {
+    mod$flm <- file.path(outputPath(sim), mod$allReps[1], paste0("flammableMap_year", padYearEnd, ".tif"))
+  }
+  
+  # mod$flm <- file.path(outputPath(sim), allReps[1], paste0("flammableMap_year", padYearEnd, ".tif"))
 
-  cdpgm <- fs::dir_ls(
-    outputPath(sim),
-    regexp = "cohortData|pixelGroupMap",
-    recurse = 1,
-    type = "file"
-  ) |>
-    grep(paste0("(", paste0(allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
-    grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
-  mod$allouts <- fs::dir_ls(
-    outputPath(sim),
-    regexp = "vegType|standAge",
-    recurse = 1,
-    type = "file"
-  ) |>
-    grep(paste0("(", paste0(allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
-    grep("gri|png|txt|xml", x = _, value = TRUE, invert = TRUE)
-  mod$allouts2 <- paste(
-    paste0(
-      "year",
-      paddedFloatToChar(
-        setdiff(c(0, P(sim)$timeSeriesTimes), mod$analysesOutputsTimes),
-        padL = padL
+  if (mod$useOutputs) {
+    cdpgm <- grep(
+      value = TRUE,
+      sim$outputsDF$file,
+      pattern = "cohortData|pixelGroupMap"
+    ) |>
+      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
+      grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
+    
+    mod$allouts2 <- mod$allouts <- grep(value = TRUE,
+      sim$outputsDF$file,
+      pattern = "vegType|standAge") |>
+      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
+      grep("gri|png|txt|xml", x = _, value = TRUE, invert = TRUE)
+  } else {
+    cdpgm <- fs::dir_ls(
+      outputPath(sim),
+      regexp = "cohortData|pixelGroupMap",
+      recurse = 1,
+      type = "file"
+    ) |>
+      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
+      grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
+    mod$allouts <- fs::dir_ls(
+      outputPath(sim),
+      regexp = "vegType|standAge",
+      recurse = 1,
+      type = "file"
+    ) |>
+      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
+      grep("gri|png|txt|xml", x = _, value = TRUE, invert = TRUE)
+    mod$allouts2 <- paste(
+      paste0(
+        "year",
+        paddedFloatToChar(
+          setdiff(c(0, P(sim)$timeSeriesTimes), mod$analysesOutputsTimes),
+          padL = padL
+        )
+      ),
+      collapse = "|"
+    ) |>
+      grep(pattern = _, x = mod$allouts, value = TRUE, invert = TRUE)
+    
+    filesUserHas <- c(cdpgm, mod$allouts2)
+    
+    dirsExpected <- file.path(outputPath(sim), mod$allReps)
+    filesExpected <- as.character(sapply(dirsExpected, function(d) {
+      c(
+        file.path(d, sprintf("cohortData_year%04d.qs2", mod$analysesOutputsTimes)),
+        file.path(d, sprintf("pixelGroupMap_year%04d.tif", mod$analysesOutputsTimes)),
+        file.path(d, sprintf("standAgeMap_year%04d.tif", mod$analysesOutputsTimes)),
+        file.path(d, sprintf("vegTypeMap_year%04d.tif", mod$analysesOutputsTimes))
       )
-    ),
-    collapse = "|"
-  ) |>
-    grep(pattern = _, x = mod$allouts, value = TRUE, invert = TRUE)
-
-  filesUserHas <- c(cdpgm, mod$allouts2)
-
-  dirsExpected <- file.path(outputPath(sim), allReps)
-  filesExpected <- as.character(sapply(dirsExpected, function(d) {
-    c(
-      file.path(d, sprintf("cohortData_year%04d.qs2", mod$analysesOutputsTimes)),
-      file.path(d, sprintf("pixelGroupMap_year%04d.tif", mod$analysesOutputsTimes)),
-      file.path(d, sprintf("standAgeMap_year%04d.tif", mod$analysesOutputsTimes)),
-      file.path(d, sprintf("vegTypeMap_year%04d.tif", mod$analysesOutputsTimes))
-    )
-  }))
-
-  filesNeeded <- data.frame(file = filesExpected, exists = filesExpected %in% filesUserHas)
-
-  if (!all(filesNeeded$exists)) {
-    missing <- filesNeeded[filesNeeded$exists == FALSE, ]$file
-    stop(
-      sum(!filesNeeded$exists),
-      " simulation files appear to be missing:\n",
-      paste(missing, collapse = "\n")
-    )
+    }))
+    
+    filesNeeded <- data.frame(file = filesExpected, exists = filesExpected %in% filesUserHas)
+    
+    if (!all(filesNeeded$exists)) {
+      missing <- filesNeeded[filesNeeded$exists == FALSE, ]$file
+      stop(
+        sum(!filesNeeded$exists),
+        " simulation files appear to be missing:\n",
+        paste(missing, collapse = "\n")
+      )
+    }
   }
 
-  mod$layerName <- gsub(mod$allouts2, pattern = paste0(".*", outputPath(sim)), replacement = "")
-  mod$layerName <- gsub(mod$layerName, pattern = "[/\\]", replacement = "_")
-  mod$layerName <- gsub(mod$layerName, pattern = "^_", replacement = "")
+  # mod$layerName <- gsub(mod$allouts2, pattern = paste0(".*", outputPath(sim)), replacement = "")
+  # mod$layerName <- gsub(mod$layerName, pattern = "[/\\]", replacement = "_")
+  # mod$layerName <- gsub(mod$layerName, pattern = "^_", replacement = "")
 
   mod$sam <- gsub(".*vegTypeMap.*", NA, mod$allouts2) |>
     grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
   mod$vtm <- gsub(".*standAgeMap.*", NA, mod$allouts2) |>
     grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
 
-  mod$samTimeSeries <- gsub(".*vegTypeMap.*", NA, mod$allouts) |>
-    grep(paste(P(sim)$timeSeriesTimes, collapse = "|"), x = _, value = TRUE)
-  mod$vtmTimeSeries <- gsub(".*standAgeMap.*", NA, mod$allouts) |>
-    grep(paste(P(sim)$timeSeriesTimes, collapse = "|"), x = _, value = TRUE)
+  # mod$samTimeSeries <- gsub(".*vegTypeMap.*", NA, mod$allouts) |>
+  #   grep(paste(P(sim)$timeSeriesTimes, collapse = "|"), x = _, value = TRUE)
+  # mod$vtmTimeSeries <- gsub(".*standAgeMap.*", NA, mod$allouts) |>
+  #   grep(paste(P(sim)$timeSeriesTimes, collapse = "|"), x = _, value = TRUE)
 
   ## cohortData and pixelGroupMap files
   mod$cd <- grep("cohortData", cdpgm, value = TRUE)
