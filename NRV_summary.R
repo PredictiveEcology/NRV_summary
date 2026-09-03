@@ -345,20 +345,11 @@ InitMulti <- function(sim) {
   ## check for necessary output files -----------------------------------------------
   ## NOTE: don't load simLists -- slow and unreliable
   mod$useOutputs <- NROW(sim$outputsDF) > 0
-  if (mod$useOutputs) {
-    reps_str <- sub(".*/rep(\\d+)/.*", "\\1", sim$outputsDF$file)
-    mod$allReps <- paste0("rep", sort(unique(reps_str[as.integer(reps_str) %in% Par$reps])))
-    
-  } else {
-    mod$allReps <- sprintf("rep%02d", P(sim)$reps)
-  }
-  if (all(is.na(P(sim)$simTimes))) {
-    P(sim)$simTimes <- unlist(times(sim)[c("start", "end")])
-  }
-  
-  padL <- ceiling(log10(P(sim)$simTimes[2] + 1))
-  padYearStart <- paddedFloatToChar(P(sim)$simTimes[1], padL = padL)
-  padYearEnd <- paddedFloatToChar(P(sim)$simTimes[2], padL = padL)
+  mod$allReps <- dirnamesFromSet(sim$outputsDF$file, P(sim)$reps)
+
+  ## assigned back: P(sim)$simTimes is read downstream, not just for padding
+  P(sim)$simTimes <- resolveSimYears(P(sim)$simTimes, sim)
+  pad <- padYears(P(sim)$simTimes)
 
   ## all reps have same flammable map
   ## all reps have same flammable map
@@ -366,19 +357,19 @@ InitMulti <- function(sim) {
     mod$flm <- unique(grep("flammable", sim$outputsDF$file, value = TRUE))
     mod$flm <- grep(mod$allReps[1], mod$flm, value = TRUE)
   } else {
-    mod$flm <- file.path(outputPath(sim), mod$allReps[1], paste0("flammableMap_year", padYearEnd, ".tif"))
+    mod$flm <- file.path(outputPath(sim), mod$allReps[1], paste0("flammableMap_year", pad$end, ".tif"))
   }
   
-  # mod$flm <- file.path(outputPath(sim), allReps[1], paste0("flammableMap_year", padYearEnd, ".tif"))
+  # mod$flm <- file.path(outputPath(sim), allReps[1], paste0("flammableMap_year", pad$end, ".tif"))
 
   ## current-conditions reference = the sim's saved year-0 state (the deterministic
   ## initial condition, identical across reps -- read from rep 1). Read directly so
   ## the CC snapshot needs no regeneration from speciesLayers / no "CC SAM" input,
   ## and no write-before-read ordering between the landscape + patch metric events.
-  mod$fvtm0 <- file.path(outputPath(sim), mod$allReps[1], paste0("vegTypeMap_year", padYearStart, ".tif"))
-  mod$fsam0 <- file.path(outputPath(sim), mod$allReps[1], paste0("standAgeMap_year", padYearStart, ".tif"))
+  mod$fvtm0 <- file.path(outputPath(sim), mod$allReps[1], paste0("vegTypeMap_year", pad$start, ".tif"))
+  mod$fsam0 <- file.path(outputPath(sim), mod$allReps[1], paste0("standAgeMap_year", pad$start, ".tif"))
   ## current-conditions time-since-fire (burnSummaries output); age basis for the LandWeb summaries.
-  mod$ftsf0 <- file.path(outputPath(sim), mod$allReps[1], paste0("rstTimeSinceFire_year", padYearStart, ".tif"))
+  mod$ftsf0 <- file.path(outputPath(sim), mod$allReps[1], paste0("rstTimeSinceFire_year", pad$start, ".tif"))
 
   ## The year-0 rasters are the SIMULATION's initial state, in which urban has been imputed to its
   ## nearest forest type so the run approximates a pre-industrial landscape. Reporting current
@@ -439,7 +430,7 @@ InitMulti <- function(sim) {
         "year",
         paddedFloatToChar(
           setdiff(c(0, P(sim)$timeSeriesTimes), mod$analysesOutputsTimes),
-          padL = padL
+          padL = pad$padL
         )
       ),
       collapse = "|"
