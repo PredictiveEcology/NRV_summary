@@ -82,11 +82,24 @@ knitr::kable(df_params, caption = "List of (ref:NRV-summary) parameters and thei
 
 ### Events
 
-Describe what happens for each event type.
+In `mode = "multi"` the postprocessing events selected via the `postprocessEvents`
+parameter run at the end of the simulation. Alongside the metric events (`lm`, `pm`,
+`lw`, `bc`, ...), `"am"` produces a **stand-age time-series animation**: replicate 1's
+saved `standAgeMap` layers for the `timeSeriesTimes` years are reclassified into age
+classes (`ageClassCutOffs` / `ageClasses`, coloured young &rarr; old with `RdYlGn`) and
+written to `standAge_animation.gif` under the module's figure path.
+
+The animation is encoded with **`gifski`** (a pure-Rust GIF encoder bundled as an R
+package), which needs no external tools. This deliberately avoids ImageMagick: the v2
+`animation::saveGIF` path routinely failed with *"cache resources exhausted"* and required
+raising ImageMagick's `policy.xml` memory/disk limits (see
+[LandWeb #153](https://github.com/PredictiveEcology/LandWeb/issues/153)). With `gifski`
+**no such system configuration is required**.
 
 ### Plotting
 
-Write what is plotted.
+`plotFun` writes the NRV envelope figures (ribbon + box-and-whisker) per reporting
+polygon; the `"am"` event additionally writes the stand-age animation GIF (see *Events*).
 
 ### Saving
 
