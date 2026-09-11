@@ -32,7 +32,7 @@ defineModule(sim, list(
     ## names (the tenure layer holds both "ANC" and "DawsonCreek_TSA") recombined into the
     ## cartesian product of tokens -- 45 fabricated tenures in place of 11, 6 dropped. Wrong
     ## but non-blank labels, and the run completes, so nothing catches it downstream.
-    "FOR-CAST/nrvtools (>= 0.2.11)",
+    "FOR-CAST/nrvtools@development (>= 0.2.11)",
     "PredictiveEcology/pemisc@development (>= 0.0.4.9011)",
     "PredictiveEcology/SpaDES.core@development (>= 3.0.3.9000)"
   ),
