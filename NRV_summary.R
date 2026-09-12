@@ -146,6 +146,13 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
   switch(
     eventType,
     init = {
+      ## No tree species in this study area (sppEquiv has no rows, established by fireSense_ELFs):
+      ## there is no vegetation to summarise, so schedule nothing.
+      if (is.data.frame(sim$sppEquiv) && nrow(sim$sppEquiv) == 0L) {
+        message("NRV_summary: no tree species in this study area; no vegetation summaries")
+        return(invisible(sim))
+      }
+
       if (min(P(sim)$summaryPeriod) < start(sim) || max(P(sim)$summaryPeriod) > end(sim)) {
         stop("summaryPeriod values are outside the range of simulation times")
       }
