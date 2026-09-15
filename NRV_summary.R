@@ -33,7 +33,7 @@ defineModule(sim, list(
     ## cartesian product of tokens -- 45 fabricated tenures in place of 11, 6 dropped. Wrong
     ## but non-blank labels, and the run completes, so nothing catches it downstream.
     "FOR-CAST/nrvtools@development (>= 0.2.11)",
-    "PredictiveEcology/pemisc@development (>= 0.0.4.9011)",
+    "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
     "PredictiveEcology/SpaDES.core@development (>= 3.0.3.9000)"
   ),
   parameters = bindrows(
