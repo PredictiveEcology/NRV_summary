@@ -17,7 +17,7 @@ defineModule(sim, list(
     "data.table", "dplyr", "fs", "future.apply", "future.callr",
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
     "RColorBrewer", "sf", "terra", "tidyterra",
-    "PredictiveEcology/LandR@development (>= 1.1.1)",
+    "PredictiveEcology/LandR@development (>= 1.2.0.9024)",
     "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9016)",
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
@@ -93,8 +93,12 @@ defineModule(sim, list(
                     "lower and upper end of the range of simulation times used for summary analyses."),
     defineParameter("timeSeriesTimes", "numeric", start(sim) + 601:650, NA, NA,
                     "simulation times for which to build time steries animations."),
-    defineParameter("vegLeadingProportion", "numeric", 0.8, 0.0, 1.0,
-                    "a number that defines whether a species is leading for a given pixel"),
+    defineParameter("vegLeadingProportion", "numeric", LandR::leadingSpeciesProp(),
+                    0.0, 1.0,
+                    desc = paste("a number that defines whether a species is leading for a given pixel.",
+                                 "Default: `LandR::leadingSpeciesProp()`, i.e. option `LandR.leadingSpeciesProp`,",
+                                 "which takes `LandR.mixedwoodProp` (0.75) unless set. Setting it in one place",
+                                 "moves every module and LandR function together.")),
     defineParameter(".plots", "character", "screen", NA, NA,
                     "Used by `SpaDES.core::Plots`, which can be optionally used here."),
     defineParameter(".plotInitialTime", "numeric", start(sim), NA, NA,
