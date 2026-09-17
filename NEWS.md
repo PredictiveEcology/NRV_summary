@@ -2,6 +2,12 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## `vegLeadingProportion` default from options
+
+- `vegLeadingProportion` now defaults to `getOption("NTEMS.mixedwoodProp", getOption("LandR.vegLeadingProportion", 0.8))`,
+  the same nested option LandR's `vegTypeMapGenerator()` uses, so one option sets the leading-species
+  threshold for every module and LandR function. The default is unchanged (0.8) when neither option is set.
+
 ## Stable output keys via curated short names (`2.0.0.9020`)
 
 - `refCode` (which names the `_aggregates/<refCode>/` parquet directory and the figure/CSV
