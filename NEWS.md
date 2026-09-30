@@ -2,10 +2,6 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
-## Missing packages in `reqdPkgs` (`2.0.0.9025`)
-
-* `reqdPkgs` now lists `crayon`, `future` and `reproducible`, which the module's code uses.
-
 ## `vegLeadingProportion` default from options
 
 - `vegLeadingProportion` now defaults to `LandR::leadingSpeciesProp()` (option
