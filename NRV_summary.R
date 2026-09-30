@@ -7,16 +7,16 @@ defineModule(sim, list(
     person(c("Alex", "M."), "Chubaty", email = "achubaty@for-cast.ca", role = c("aut"))
   ),
   childModules = character(0),
-  version = list(NRV_summary = "2.0.0.9025"),
+  version = list(NRV_summary = "2.0.0.9024"),
   timeframe = as.POSIXlt(c(NA, NA)),
   timeunit = "year",
   citation = list("citation.bib"),
   loadOrder = list(after = c("Biomass_core")),
   documentation = list("README.md", "NRV_summary.Rmd"), ## .md produced from .Rmd
   reqdPkgs = list(
-    "crayon", "data.table", "dplyr", "fs", "future", "future.apply", "future.callr",
+    "data.table", "dplyr", "fs", "future.apply", "future.callr",
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
-    "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
+    "RColorBrewer", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9024)",
     "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9016)",
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
