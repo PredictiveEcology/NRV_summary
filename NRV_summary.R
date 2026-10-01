@@ -7,16 +7,16 @@ defineModule(sim, list(
     person(c("Alex", "M."), "Chubaty", email = "achubaty@for-cast.ca", role = c("aut"))
   ),
   childModules = character(0),
-  version = list(NRV_summary = "2.0.0.9024"),
+  version = list(NRV_summary = "2.0.0.9025"),
   timeframe = as.POSIXlt(c(NA, NA)),
   timeunit = "year",
   citation = list("citation.bib"),
   loadOrder = list(after = c("Biomass_core")),
   documentation = list("README.md", "NRV_summary.Rmd"), ## .md produced from .Rmd
   reqdPkgs = list(
-    "data.table", "dplyr", "fs", "future.apply", "future.callr",
+    "crayon", "data.table", "dplyr", "fs", "future", "future.apply", "future.callr",
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
-    "RColorBrewer", "sf", "terra", "tidyterra",
+    "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9024)",
     "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9016)",
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
@@ -32,7 +32,7 @@ defineModule(sim, list(
     ## names (the tenure layer holds both "ANC" and "DawsonCreek_TSA") recombined into the
     ## cartesian product of tokens -- 45 fabricated tenures in place of 11, 6 dropped. Wrong
     ## but non-blank labels, and the run completes, so nothing catches it downstream.
-    "FOR-CAST/nrvtools (>= 0.2.11)",
+    "FOR-CAST/nrvtools@development (>= 0.2.11)",
     "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
     "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9001)" ## dirnamesFromSet(), resolveSimYears(), padYears()
   ),
@@ -104,7 +104,7 @@ defineModule(sim, list(
     defineParameter("summaryPeriod", "integer", start(sim) + c(700L, 1000L), NA, NA,
                     "lower and upper end of the range of simulation times used for summary analyses."),
     defineParameter("timeSeriesTimes", "numeric", start(sim) + 601:650, NA, NA,
-                    "simulation times for which to build time steries animations."),
+                    "simulation times for which to build time series animations."),
     defineParameter("vegLeadingProportion", "numeric", LandR::leadingSpeciesProp(),
                     0.0, 1.0,
                     desc = paste("a number that defines whether a species is leading for a given pixel.",
@@ -162,6 +162,13 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
   switch(
     eventType,
     init = {
+      ## No tree species in this study area (sppEquiv has no rows, established by fireSense_ELFs):
+      ## there is no vegetation to summarise, so schedule nothing.
+      if (is.data.frame(sim$sppEquiv) && nrow(sim$sppEquiv) == 0L) {
+        message("NRV_summary: no tree species in this study area; no vegetation summaries")
+        return(invisible(sim))
+      }
+
       if (min(P(sim)$summaryPeriod) < start(sim) || max(P(sim)$summaryPeriod) > end(sim)) {
         stop("summaryPeriod values are outside the range of simulation times")
       }
