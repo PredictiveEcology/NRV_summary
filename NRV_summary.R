@@ -1295,7 +1295,7 @@ makeAnimation <- function(sim) {
   environment(render_one) <- new.env(parent = globalenv())
   ## the one module helper render_one uses, detached the same way
   addCC <- .addCurrentCondition
-  environment(addCC) <- new.env(parent = globalenv())
+  environment(addCC) <- list2env(list(.ccColour = .ccColour), parent = globalenv())
   assign(".addCurrentCondition", addCC, envir = environment(render_one))
 
   nWorkers <- .plotWorkers(sim, length(tasks))
@@ -1436,6 +1436,9 @@ plotFun <- function(sim) {
 }
 
 ## ---- current condition on the figures ---------------------------------------------------------
+## the legend label and colour of the current condition, on every figure that shows it
+.ccColour <- c("current condition" = "firebrick")
+
 ## Add the current-condition value to an envelope figure from `plot_nrv_envelope()` as a dashed red
 ## horizontal line labelled "current condition", in the panel it belongs to. `cc` has the facet
 ## columns of `facet` and `mean` (the current-condition value, a single snapshot). The panel a row
@@ -1452,11 +1455,11 @@ plotFun <- function(sim) {
   } else {
     data.frame(.panel = unique(d$.panel), mean = cc$mean[1L])
   }
-  line$line <- "current condition"
+  line$line <- names(.ccColour)
   gg +
     ggplot2::geom_hline(data = line, ggplot2::aes(yintercept = mean, colour = line),
                         linetype = "dashed", linewidth = 0.7, inherit.aes = FALSE) +
-    ggplot2::scale_colour_manual(values = c("current condition" = "firebrick"), name = NULL) +
+    ggplot2::scale_colour_manual(values = .ccColour, name = NULL) +
     ggplot2::theme(legend.position = "bottom")
 }
 
@@ -1480,8 +1483,8 @@ plotFun <- function(sim) {
   ggplot2::ggplot(nrv, ggplot2::aes(y = metric)) +
     ggplot2::geom_segment(ggplot2::aes(x = 0, xend = 1, yend = metric), colour = "grey75", linewidth = 4) +
     ggplot2::geom_point(ggplot2::aes(x = midPos, shape = "NRV mean"), size = 3) +
-    ggplot2::geom_point(ggplot2::aes(x = ccPos, colour = "current condition"), size = 3) +
-    ggplot2::scale_colour_manual(values = c("current condition" = "firebrick"), name = NULL) +
+    ggplot2::geom_point(ggplot2::aes(x = ccPos, colour = names(.ccColour)), size = 3) +
+    ggplot2::scale_colour_manual(values = .ccColour, name = NULL) +
     ggplot2::scale_shape_manual(values = c("NRV mean" = 124), name = NULL) +
     ggplot2::facet_wrap(~poly) +
     ggplot2::labs(x = "position within the NRV envelope (0 = NRV minimum, 1 = NRV maximum)", y = NULL,
