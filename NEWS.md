@@ -2,6 +2,17 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## Multi mode: replicate counts and file locations
+
+- `InitMulti()` takes each file once from `outputsDF`. A file registered twice (the last year is saved
+  by the sim and again by the summary modules) repeated that replicate's row at that time, so
+  `n_reps` in the envelopes was above the number of reps (7 at the last year for 4 reps).
+- The year-0 and flammable rasters are read from the directory the replicate's outputs are in, not
+  `<outputPath>/rep1`, which does not exist when `outputPath` ends in `_all`.
+- Removed the `browser()` call in `postprocess_fd`; the event now says it is not implemented.
+- `.planWithWorkers()` no longer passes `workers` to a sequential plan (it warned "unknown arguments").
+- Requires SpaDES.core >= 3.2.1.9001 (`dirnamesFromSet()`, `resolveSimYears()`, `padYears()`).
+
 ## `vegLeadingProportion` default from options
 
 - `vegLeadingProportion` now defaults to `LandR::leadingSpeciesProp()` (option

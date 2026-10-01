@@ -34,7 +34,7 @@ defineModule(sim, list(
     ## but non-blank labels, and the run completes, so nothing catches it downstream.
     "FOR-CAST/nrvtools (>= 0.2.11)",
     "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
-    "PredictiveEcology/SpaDES.core@development (>= 3.0.3.9000)"
+    "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9001)" ## dirnamesFromSet(), resolveSimYears(), padYears()
   ),
   parameters = bindrows(
     defineParameter("ageClasses", "character", LandWebUtils:::.ageClasses, NA, NA,
@@ -263,7 +263,8 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
       sim <- patchMetrics(sim)
     },
     postprocess_fd = {
-      browser() ## TODO
+      ## TODO: not yet implemented
+      message("NRV_summary: the `fd` postprocess event is not yet implemented.")
     },
     postprocess_lw = {
       sim <- landWebMetrics(sim)
@@ -349,31 +350,35 @@ InitMulti <- function(sim) {
   ## check for necessary output files -----------------------------------------------
   ## NOTE: don't load simLists -- slow and unreliable
   mod$useOutputs <- NROW(sim$outputsDF) > 0
-  mod$allReps <- dirnamesFromSet(sim$outputsDF$file, P(sim)$reps)
+  ## a file saved more than once (e.g. the last year, by the sim's own save and again at the end of
+  ## the run) is registered more than once in outputsDF; it is still one file per rep and year, and
+  ## repeating it would repeat that rep's row at that time in the envelopes (n_reps > number of reps).
+  outFiles <- unique(sim$outputsDF$file)
+  mod$allReps <- dirnamesFromSet(outFiles, P(sim)$reps)
 
   ## assigned back: P(sim)$simTimes is read downstream, not just for padding
   P(sim)$simTimes <- resolveSimYears(P(sim)$simTimes, sim)
   pad <- padYears(P(sim)$simTimes)
 
-  ## all reps have same flammable map
-  ## all reps have same flammable map
-  if (mod$useOutputs) {
-    mod$flm <- unique(grep("flammable", sim$outputsDF$file, value = TRUE))
-    mod$flm <- grep(mod$allReps[1], mod$flm, value = TRUE)
+  ## where rep 1's outputs are: with outputsDF, wherever they were saved (in multi mode `outputPath(sim)`
+  ## is the summary directory, not a replicate's); otherwise `outputPath(sim)/<rep>`.
+  rep1Dir <- if (mod$useOutputs) {
+    dirnamesFromSet(outFiles, P(sim)$reps, leafOnly = FALSE)[1]
   } else {
-    mod$flm <- file.path(outputPath(sim), mod$allReps[1], paste0("flammableMap_year", pad$end, ".tif"))
+    file.path(outputPath(sim), mod$allReps[1])
   }
-  
-  # mod$flm <- file.path(outputPath(sim), allReps[1], paste0("flammableMap_year", pad$end, ".tif"))
+
+  ## all reps have same flammable map
+  mod$flm <- file.path(rep1Dir, paste0("flammableMap_year", pad$end, ".tif"))
 
   ## current-conditions reference = the sim's saved year-0 state (the deterministic
   ## initial condition, identical across reps -- read from rep 1). Read directly so
   ## the CC snapshot needs no regeneration from speciesLayers / no "CC SAM" input,
   ## and no write-before-read ordering between the landscape + patch metric events.
-  mod$fvtm0 <- file.path(outputPath(sim), mod$allReps[1], paste0("vegTypeMap_year", pad$start, ".tif"))
-  mod$fsam0 <- file.path(outputPath(sim), mod$allReps[1], paste0("standAgeMap_year", pad$start, ".tif"))
+  mod$fvtm0 <- file.path(rep1Dir, paste0("vegTypeMap_year", pad$start, ".tif"))
+  mod$fsam0 <- file.path(rep1Dir, paste0("standAgeMap_year", pad$start, ".tif"))
   ## current-conditions time-since-fire (burnSummaries output); age basis for the LandWeb summaries.
-  mod$ftsf0 <- file.path(outputPath(sim), mod$allReps[1], paste0("rstTimeSinceFire_year", pad$start, ".tif"))
+  mod$ftsf0 <- file.path(rep1Dir, paste0("rstTimeSinceFire_year", pad$start, ".tif"))
 
   ## The year-0 rasters are the SIMULATION's initial state, in which urban has been imputed to its
   ## nearest forest type so the run approximates a pre-industrial landscape. Reporting current
@@ -401,14 +406,14 @@ InitMulti <- function(sim) {
   if (mod$useOutputs) {
     cdpgm <- grep(
       value = TRUE,
-      sim$outputsDF$file,
+      outFiles,
       pattern = "cohortData|pixelGroupMap"
     ) |>
       grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
       grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
     
     mod$allouts2 <- mod$allouts <- grep(value = TRUE,
-      sim$outputsDF$file,
+      outFiles,
       pattern = "vegType|standAge") |>
       grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
       grep("gri|png|txt|xml", x = _, value = TRUE, invert = TRUE)
@@ -464,10 +469,6 @@ InitMulti <- function(sim) {
       )
     }
   }
-
-  # mod$layerName <- gsub(mod$allouts2, pattern = paste0(".*", outputPath(sim)), replacement = "")
-  # mod$layerName <- gsub(mod$layerName, pattern = "[/\\]", replacement = "_")
-  # mod$layerName <- gsub(mod$layerName, pattern = "^_", replacement = "")
 
   mod$sam <- gsub(".*vegTypeMap.*", NA, mod$allouts2) |>
     grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
@@ -550,6 +551,16 @@ InitMulti <- function(sim) {
     yv <- terra::project(yv, terra::crs(xv))
   }
   sf::st_as_sf(terra::crop(xv, yv))
+}
+
+## Set the future plan to the current strategy with `nWorkers` workers; returns the previous plan.
+## `sequential` has no `workers` argument, so tweaking it only warns ("unknown future arguments").
+.planWithWorkers <- function(nWorkers) {
+  strategy <- future::plan()
+  if (!inherits(strategy, "sequential")) {
+    strategy <- future::tweak(strategy, workers = nWorkers)
+  }
+  future::plan(strategy)
 }
 
 .ppRoot <- function(sim) {
@@ -642,9 +653,7 @@ landscapeMetrics <- function(sim) {
 
   funList <- default_landscape_metrics() ## TODO: pass this further up via parameter funList_lm
 
-  oldPlan <- future::plan() |>
-    tweak(workers = pemisc::optimalClusterNum(5000, length(fvtm))) |>
-    future::plan()
+  oldPlan <- .planWithWorkers(pemisc::optimalClusterNum(5000, length(fvtm)))
   on.exit(future::plan(oldPlan), add = TRUE)
 
   vtmByRep <- .filesByRep(fvtm)
@@ -727,9 +736,7 @@ patchMetrics <- function(sim) {
   studyAreaReporting <- sf::st_as_sf(sim$studyAreaReporting)
   funList <- default_patch_metrics() ## TODO: pass this further up via parameter funList_pm
 
-  oldPlan <- future::plan() |>
-    tweak(workers = pemisc::optimalClusterNum(5000, length(fvtm))) |>
-    future::plan()
+  oldPlan <- .planWithWorkers(pemisc::optimalClusterNum(5000, length(fvtm)))
   on.exit(future::plan(oldPlan), add = TRUE)
 
   ## one parquet partition per replicate (the vtm/sam file vectors align by index).
@@ -821,9 +828,7 @@ landWebMetrics <- function(sim) {
   funList <- default_landweb_metrics() ## TODO: pass this further up via parameter funList_lw
   idCols <- c("poly", "level", "class", "metric", "metric.1") ## pool across rep x summary year (no time)
 
-  oldPlan <- future::plan() |>
-    tweak(workers = pemisc::optimalClusterNum(5000, length(fvtm))) |>
-    future::plan()
+  oldPlan <- .planWithWorkers(pemisc::optimalClusterNum(5000, length(fvtm)))
   on.exit(future::plan(oldPlan), add = TRUE)
 
   vtmByRep <- .filesByRep(fvtm)
