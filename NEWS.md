@@ -2,6 +2,43 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## Current condition on the figures; a stability check (multi mode)
+
+- The ribbon and boxplot figures of the landscape and patch metrics now draw the current condition as a
+  dashed red line labelled "current condition", and each landscape-metric layer gets
+  `current_condition_overview.png`: every metric on one 0-1 axis (0 = NRV minimum, 1 = NRV maximum) with
+  the NRV mean and the current condition. The overview is saved through `SpaDES.core::Plots()`.
+- New event `postprocess_stability` asks whether the run is long enough: for each landscape metric, each
+  patch metric by class and the area burned per `summaryInterval` block (from burnSummaries'
+  `burnSummaries_fireSizes_allReps.csv`) it tests for a directional trend over the last
+  `stabilityWindow` (default 0.5) of `summaryPeriod`, Mann-Kendall on all reps pooled with the
+  Theil-Sen slope. A series is "still changing" when the trend is significant (`stabilityAlpha`, 0.05)
+  and the fitted change over the window is more than `stabilityMinChange` (0.10) of its NRV range. The
+  NRV range is the range of the values inside the stability window, everywhere it is used (this check
+  and the overview figure); all times are still summarised, saved and shown, and the window is shaded
+  on the envelope and time-series figures.
+  It writes `csv/stability/stability.csv` (metric, class, slope, p, change as % of range, flag), panels
+  of each series with the window shaded and the verdict in the title, a summary figure (both through
+  `Plots()`), and logs "N of M metrics still changing; consider a longer run".
+
+## Multi mode: replicate counts and file locations
+
+- `InitMulti()` takes each file once from `outputsDF`. A file registered twice (the last year is saved
+  by the sim and again by the summary modules) repeated that replicate's row at that time, so
+  `n_reps` in the envelopes was above the number of reps (7 at the last year for 4 reps).
+- The files are sorted. `outputsDF` is in the order the files were saved, which differs between the
+  veg-type and stand-age maps, and the patch metrics pair the two by position (a veg-type map of one
+  year was analysed with the stand-age map of another).
+- The year-0 and flammable rasters are read from the directory the replicate's outputs are in, not
+  `<outputPath>/rep1`, which does not exist when `outputPath` ends in `_all`.
+- Removed the `browser()` call in `postprocess_fd`; the event now says it is not implemented.
+- `.planWithWorkers()` no longer passes `workers` to a sequential plan (it warned "unknown arguments").
+- Requires SpaDES.core >= 3.2.1.9001 (`dirnamesFromSet()`, `resolveSimYears()`, `padYears()`).
+
+## Missing packages in `reqdPkgs` (`2.0.0.9025`)
+
+* `reqdPkgs` now lists `crayon`, `future` and `reproducible`, which the module's code uses.
+
 ## `vegLeadingProportion` default from options
 
 - `vegLeadingProportion` now defaults to `LandR::leadingSpeciesProp()` (option
