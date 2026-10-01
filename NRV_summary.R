@@ -87,6 +87,18 @@ defineModule(sim, list(
                     "Simulation start and end times when running in 'multi' mode."),
     defineParameter("sppEquivCol", "character", "LandR", NA, NA,
                     "The column in `sim$sppEquiv` data.table to use as a naming convention"),
+    defineParameter("stabilityAlpha", "numeric", 0.05, 0, 1,
+                    paste("(mode = 'multi') significance level of the Mann-Kendall trend test in the",
+                          "stability check.")),
+    defineParameter("stabilityMinChange", "numeric", 0.10, 0, 1,
+                    paste("(mode = 'multi') a series is flagged 'still changing' only if its fitted change",
+                          "across the stability window exceeds this fraction of the series' NRV range",
+                          "(its largest minus smallest value over all reps and summary times), as well as",
+                          "being a significant trend.")),
+    defineParameter("stabilityWindow", "numeric", 0.5, 0, 1,
+                    paste("(mode = 'multi') the last fraction of `summaryPeriod` over which the stability",
+                          "check looks for a directional trend (0.5 = the last half). A run whose",
+                          "metrics are still trending there needs to be longer.")),
     defineParameter("summaryInterval", "integer", 100L, NA, NA,
                     "simulation time interval at which to take 'snapshots' used for summary analyses."),
     defineParameter("summaryPeriod", "integer", start(sim) + c(700L, 1000L), NA, NA,
@@ -224,6 +236,9 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
           sim <- scheduleEvent(sim, end(sim), "NRV_summary", "postprocess_on", .last())
         }
 
+        ## after the metric events above, whose parquet datasets and the burn blocks it reads
+        sim <- scheduleEvent(sim, end(sim), "NRV_summary", "postprocess_stability", .last() + 1)
+
         sim <- scheduleEvent(sim, end(sim), "NRV_summary", "postprocess", .last())
         sim <- scheduleEvent(sim, end(sim), "NRV_summary", "plot", .last())
       }
@@ -268,6 +283,9 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
     },
     postprocess_lw = {
       sim <- landWebMetrics(sim)
+    },
+    postprocess_stability = {
+      sim <- stabilityCheck(sim)
     },
     postprocess_bc = {
       sim <- makeSeralStageMapsBC(sim)
@@ -1246,9 +1264,12 @@ makeAnimation <- function(sim) {
     data.table::setDTthreads(1L)
     gg <- switch(
       task[["plotter"]],
-      envelope = nrvtools::plot_nrv_envelope(
-        task[["df"]], type = task[["type"]], facet = task[["facet"]],
-        ylab = task[["ylab"]], title = task[["title"]], page = task[["page"]]
+      envelope = .addCurrentCondition(
+        nrvtools::plot_nrv_envelope(
+          task[["df"]], type = task[["type"]], facet = task[["facet"]],
+          ylab = task[["ylab"]], title = task[["title"]], page = task[["page"]]
+        ),
+        task[["cc"]], task[["facet"]]
       ),
       leading = nrvtools::plot_leading_boxplot(
         task[["df"]], cc = task[["cc"]], ageClasses = task[["ageClasses"]],
@@ -1272,6 +1293,10 @@ makeAnimation <- function(sim) {
   ## resolves everything; each task's data is shipped on its own as the mapped argument. (globalenv,
   ## not baseenv -- the latter trips future's "cycles in parent chains" during serialization.)
   environment(render_one) <- new.env(parent = globalenv())
+  ## the one module helper render_one uses, detached the same way
+  addCC <- .addCurrentCondition
+  environment(addCC) <- new.env(parent = globalenv())
+  assign(".addCurrentCondition", addCC, envir = environment(render_one))
 
   nWorkers <- .plotWorkers(sim, length(tasks))
   message("NRV_summary: rendering ", length(tasks), " figure(s) across ", nWorkers, " worker(s)")
@@ -1312,6 +1337,7 @@ plotFun <- function(sim) {
       return(list())
     }
     d <- .ppFigDir(sim, kind, p) ## create the output dir on the main worker
+    ccAll <- mod[[paste0(LandWebUtils::refCodeFor(kind, p), "_CC")]] ## the current-condition snapshot
     tasks <- list()
 
     if (perSubregion) {
@@ -1326,9 +1352,10 @@ plotFun <- function(sim) {
           sub <- em[em$poly == poly, , drop = FALSE]
           if (!nrow(sub)) next
           ttl <- paste0(poly, " — ", met)
+          cc <- if (!is.null(ccAll)) ccAll[ccAll$poly == poly & ccAll$metric == met, , drop = FALSE]
           for (type in c("ribbon", "boxplot")) {
             tasks[[length(tasks) + 1L]] <- list(
-              plotter = "envelope", df = sub, type = type,
+              plotter = "envelope", df = sub, type = type, cc = cc,
               facet = c("class", "metric.1"), ylab = ylab, title = ttl, page = NULL,
               file = file.path(d, paste0(safe(poly), " ", safe(met), "_", type, ".png")),
               width = 16, height = 10
@@ -1373,6 +1400,16 @@ plotFun <- function(sim) {
   if ("lm" %in% events) {
     for (p in mod$rptPolyNames) {
       tasks <- c(tasks, envTasks("lm", p, ylab = "landscape metric value", perSubregion = TRUE))
+
+      env <- mod[[LandWebUtils::refCodeFor("lm", p)]]
+      cc <- mod[[paste0(LandWebUtils::refCodeFor("lm", p), "_CC")]]
+      if (!is.null(env) && nrow(env) && !is.null(cc) && nrow(cc)) {
+        Plots(
+          data = list(env = env, cc = cc), fn = .currentConditionOverview,
+          filename = "current_condition_overview", path = .ppFigDir(sim, "lm", p),
+          types = P(sim)$.plots, ggsaveArgs = list(width = 10, height = 8, units = "in")
+        )
+      }
     }
   }
   if ("pm" %in% events) {
@@ -1396,6 +1433,240 @@ plotFun <- function(sim) {
     sim <- registerOutputs(pngs, sim)
   }
   return(invisible(sim))
+}
+
+## ---- current condition on the figures ---------------------------------------------------------
+## Add the current-condition value to an envelope figure from `plot_nrv_envelope()` as a dashed red
+## horizontal line labelled "current condition", in the panel it belongs to. `cc` has the facet
+## columns of `facet` and `mean` (the current-condition value, a single snapshot). The panel a row
+## belongs to is read from the plot's own `.panel` column, so the labels cannot drift from nrvtools'.
+.addCurrentCondition <- function(gg, cc, facet) {
+  if (is.null(cc) || !nrow(cc)) {
+    return(gg)
+  }
+  d <- gg$data
+  facet <- facet[facet %in% names(d) & facet %in% names(cc)]
+  facet <- facet[vapply(facet, function(f) length(unique(d[[f]])) > 1L, logical(1L))]
+  line <- if (length(facet)) {
+    merge(unique(d[c(".panel", facet)]), cc[c(facet, "mean")], by = facet)
+  } else {
+    data.frame(.panel = unique(d$.panel), mean = cc$mean[1L])
+  }
+  line$line <- "current condition"
+  gg +
+    ggplot2::geom_hline(data = line, ggplot2::aes(yintercept = mean, colour = line),
+                        linetype = "dashed", linewidth = 0.7, inherit.aes = FALSE) +
+    ggplot2::scale_colour_manual(values = c("current condition" = "firebrick"), name = NULL) +
+    ggplot2::theme(legend.position = "bottom")
+}
+
+## Where the current condition falls within the NRV envelope, for every landscape metric on one axis.
+## `data` = list(env =, cc =): the envelope over the summary times (min, max, mean per time) and the
+## current-condition snapshot (mean). Each metric is rescaled so its NRV range (smallest min to largest
+## max over the summary times) is 0-1: the grey bar is the range, the black tick the NRV mean, the red
+## dot the current condition. A dot outside 0-1 is outside the NRV.
+.currentConditionOverview <- function(data) {
+  env <- data$env
+  cc <- data$cc
+  byMetric <- split(env, paste(env$poly, env$metric, sep = "\r"))
+  nrv <- do.call(rbind, lapply(byMetric, function(e) {
+    data.frame(poly = e$poly[1L], metric = e$metric[1L], lo = min(e$min), hi = max(e$max), mid = mean(e$mean))
+  }))
+  nrv <- merge(nrv, stats::setNames(cc[c("poly", "metric", "mean")], c("poly", "metric", "current")),
+               by = c("poly", "metric"))
+  nrv <- nrv[nrv$hi > nrv$lo, , drop = FALSE]
+  nrv$ccPos <- (nrv$current - nrv$lo) / (nrv$hi - nrv$lo)
+  nrv$midPos <- (nrv$mid - nrv$lo) / (nrv$hi - nrv$lo)
+  ggplot2::ggplot(nrv, ggplot2::aes(y = metric)) +
+    ggplot2::geom_segment(ggplot2::aes(x = 0, xend = 1, yend = metric), colour = "grey75", linewidth = 4) +
+    ggplot2::geom_point(ggplot2::aes(x = midPos, shape = "NRV mean"), size = 3) +
+    ggplot2::geom_point(ggplot2::aes(x = ccPos, colour = "current condition"), size = 3) +
+    ggplot2::scale_colour_manual(values = c("current condition" = "firebrick"), name = NULL) +
+    ggplot2::scale_shape_manual(values = c("NRV mean" = 124), name = NULL) +
+    ggplot2::facet_wrap(~poly) +
+    ggplot2::labs(x = "position within the NRV envelope (0 = NRV minimum, 1 = NRV maximum)", y = NULL,
+                  title = "Current condition relative to the NRV") +
+    ggplot2::theme_bw(base_size = 9) +
+    ggplot2::theme(legend.position = "bottom")
+}
+
+## ---- is the run long enough? Directional change over the last part of the summary period -----------
+## The summaries describe a landscape that is meant to be in equilibrium. A metric still trending at
+## the end of the run means the envelope mixes the transient with the equilibrium, and the run needs
+## to be longer. Each series (a landscape metric, a patch metric by class, the area burned per block)
+## is tested over the last `stabilityWindow` of `summaryPeriod`, on the values of all reps pooled.
+## Test: Mann-Kendall (Kendall's tau of value against time) for the p-value and the Theil-Sen slope
+## (median of the pairwise slopes) for the size of the trend. Both use ranks and medians, so one odd
+## rep or a skewed metric does not decide the verdict, as it can with an OLS slope; and pooling the reps
+## keeps the spread among reps in the test, so a noisy series needs a larger trend to be significant.
+## A series is "still changing" when the trend is significant AND the fitted change over the window is
+## more than `minChange` of the series' NRV range (largest minus smallest value over all reps and
+## times); a significant but tiny trend is not worth a longer run. Fewer than 3 distinct times in the
+## window cannot be tested ("insufficient").
+
+## one series: Mann-Kendall p-value and Theil-Sen slope of `value` against `time`
+.senKendall <- function(time, value) {
+  if (length(unique(value)) < 2L) {
+    return(c(slope = 0, p = 1)) ## constant: no trend
+  }
+  pairs <- utils::combn(length(time), 2L)
+  dt <- time[pairs[2L, ]] - time[pairs[1L, ]]
+  dv <- value[pairs[2L, ]] - value[pairs[1L, ]]
+  p <- suppressWarnings(stats::cor.test(time, value, method = "kendall", exact = FALSE)$p.value)
+  c(slope = stats::median(dv[dt != 0] / dt[dt != 0]), p = p)
+}
+
+## `series`: one row per rep x time x series, with the `keys` columns identifying the series, plus
+## `rep`, `time` and `value`. `window` = c(from, to) in simulation time. Returns one row per series:
+## the keys, nTimes (distinct times in the window), slope (per time unit), p, changePctRange (the fitted
+## change over the window as % of the NRV range), flag ("still changing", "stable" or "insufficient").
+.trendStability <- function(series, keys, window, alpha = 0.05, minChange = 0.10) {
+  id <- do.call(paste, c(lapply(series[keys], as.character), sep = "\r"))
+  rows <- lapply(split(seq_len(nrow(series)), factor(id, levels = unique(id))), function(i) {
+    s <- series[i, , drop = FALSE]
+    s <- s[is.finite(s$value), , drop = FALSE]
+    w <- s[s$time >= window[1L] & s$time <= window[2L], , drop = FALSE]
+    out <- cbind(series[i[1L], keys, drop = FALSE], nTimes = length(unique(w$time)), slope = NA_real_,
+                 p = NA_real_, changePctRange = NA_real_, flag = "insufficient")
+    if (out$nTimes >= 3L) {
+      tr <- .senKendall(w$time, w$value)
+      nrvRange <- diff(range(s$value))
+      out$slope <- tr[["slope"]]
+      out$p <- tr[["p"]]
+      out$changePctRange <- if (nrvRange > 0) 100 * out$slope * diff(range(w$time)) / nrvRange else 0
+      out$flag <- if (out$p < alpha && abs(out$changePctRange) > 100 * minChange) "still changing" else "stable"
+    }
+    out
+  })
+  res <- do.call(rbind, rows)
+  rownames(res) <- NULL
+  res
+}
+
+## Area burned (ha) per block of `blockYears` years per rep, from the fire-size table of
+## burnSummaries (columns rep, year, areaBurnedHa). Blocks with no fire are 0, not missing: a
+## missing block would hide exactly the trend a shrinking fire regime shows. `time` = block start.
+.burnBlockSeries <- function(fireSizes, years, blockYears = 100L) {
+  starts <- seq(years[1L], years[2L] - 1L, by = blockYears)
+  reps <- sort(unique(fireSizes$rep))
+  blocks <- expand.grid(rep = reps, time = starts)
+  blocks$value <- mapply(function(r, t) {
+    sum(fireSizes$areaBurnedHa[fireSizes$rep == r & fireSizes$year >= t & fireSizes$year < t + blockYears])
+  }, blocks$rep, blocks$time)
+  blocks
+}
+
+## The series the stability check looks at: landscape and patch metrics per rep (from the _aggregates
+## parquet), and the area burned per block when burnSummaries wrote it. Columns:
+## kind, layer, poly, level, class, metric, rep, time, value.
+.stabilitySeries <- function(sim) {
+  events <- tolower(P(sim)$postprocessEvents)
+  vtmRAT <- terra::rast(mod$fvtm0)
+  one <- lapply(intersect(c("lm", "pm"), events), function(kind) {
+    lapply(mod$rptPolyNames, function(p) {
+      raw <- open_nrv_dataset(.nrvAggRoot(sim, LandWebUtils::refCodeFor(kind, p)))
+      if (is.null(raw)) {
+        return(NULL)
+      }
+      raw <- as.data.frame(dplyr::collect(raw))
+      if (kind == "pm") raw <- nrvtools::label_vegtype_classes(raw, vtmRAT)
+      raw$class <- as.character(raw$class)
+      data.frame(kind = kind, layer = p, raw[, c("poly", "level", "class", "metric", "rep", "time", "value")])
+    })
+  })
+  fs <- file.path(outputPath(sim), "burnSummaries_fireSizes_allReps.csv")
+  burn <- if (file.exists(fs)) {
+    b <- .burnBlockSeries(data.table::fread(fs), P(sim)$simTimes, P(sim)$summaryInterval)
+    data.frame(kind = "burn", layer = P(sim)$.studyAreaName, poly = P(sim)$.studyAreaName,
+               level = "landscape", class = NA_character_, metric = "areaBurnedHa per block",
+               rep = b$rep, time = b$time, value = b$value)
+  }
+  do.call(rbind, c(unlist(one, recursive = FALSE), list(burn)))
+}
+
+.stabilityKeys <- c("kind", "layer", "poly", "level", "class", "metric")
+
+## the window the check looks at: the last `stabilityWindow` of the summary period
+.stabilityWindow <- function(sim) {
+  sp <- range(P(sim)$summaryPeriod)
+  c(sp[2L] - P(sim)$stabilityWindow * diff(sp), sp[2L])
+}
+
+## Panels of each series over time (reps as thin lines, mean in bold), the window shaded, and the
+## verdict in each panel title; `page` of `nPages` panels sets.
+.stabilityPanels <- function(data, window, page = 1L, ncol = 4L, nrow = 3L) {
+  d <- data$series
+  d$panel <- paste0(ifelse(is.na(d$class), "", paste0(d$class, " ")), d$metric, "\n", d$layer, "/", d$poly, ": ",
+                    data$flag[match(do.call(paste, d[.stabilityKeys]), data$id)])
+  ggplot2::ggplot(d, ggplot2::aes(time, value)) +
+    ggplot2::annotate("rect", xmin = window[1L], xmax = window[2L], ymin = -Inf, ymax = Inf,
+                      alpha = 0.15, fill = "orange") +
+    ggplot2::geom_line(ggplot2::aes(group = rep), colour = "grey60", linewidth = 0.3) +
+    ggplot2::stat_summary(fun = mean, geom = "line", linewidth = 0.8) +
+    ggforce::facet_wrap_paginate(~panel, ncol = ncol, nrow = nrow, page = page, scales = "free_y") +
+    ggplot2::labs(x = "time", y = NULL, caption = "shaded: stability window; thin lines: reps; bold: mean") +
+    ggplot2::theme_bw(base_size = 9)
+}
+
+## One summary of the verdicts: fitted change over the window as % of the NRV range, one point per
+## series, by metric, coloured by verdict, with the `minChange` thresholds.
+.stabilitySummary <- function(res, minChange) {
+  res$label <- paste(res$kind, res$metric)
+  ggplot2::ggplot(res, ggplot2::aes(changePctRange, label, colour = flag)) +
+    ggplot2::geom_vline(xintercept = c(-1, 1) * 100 * minChange, linetype = "dashed") +
+    ggplot2::geom_point(alpha = 0.7) +
+    ggplot2::scale_colour_manual(values = c(stable = "steelblue", `still changing` = "firebrick",
+                                            insufficient = "grey60"), drop = FALSE) +
+    ggplot2::labs(x = "fitted change over the window (% of NRV range)", y = NULL, colour = NULL) +
+    ggplot2::theme_bw(base_size = 9)
+}
+
+## "N of M metrics still changing; consider a longer run"
+.stabilityVerdict <- function(res) {
+  tested <- res$flag != "insufficient"
+  n <- sum(res$flag == "still changing")
+  paste0(n, " of ", sum(tested), " metrics still changing",
+         if (n > 0L) "; consider a longer run" else "; the run is long enough",
+         if (any(!tested)) paste0(" (", sum(!tested), " with too few summary times to test)"))
+}
+
+stabilityCheck <- function(sim) {
+  series <- .stabilitySeries(sim)
+  if (is.null(series) || !nrow(series)) {
+    message("NRV_summary stability: no series to test")
+    return(invisible(sim))
+  }
+  window <- .stabilityWindow(sim)
+  res <- .trendStability(series, .stabilityKeys, window, P(sim)$stabilityAlpha, P(sim)$stabilityMinChange)
+
+  d <- reproducible::checkPath(file.path(.ppRoot(sim), "csv", "stability"), create = TRUE)
+  f_csv <- file.path(d, "stability.csv")
+  utils::write.csv(res, f_csv, row.names = FALSE)
+  sim <- registerOutputs(f_csv, sim)
+
+  message("NRV_summary stability (", window[1L], "-", window[2L], "): ", .stabilityVerdict(res))
+
+  figDir <- .ppFigDir(sim, "stability", "all")
+  id <- do.call(paste, res[.stabilityKeys])
+  for (k in unique(series$kind)) {
+    sk <- series[series$kind == k, , drop = FALSE]
+    rk <- res[res$kind == k, , drop = FALSE]
+    nPages <- ceiling(nrow(rk) / 12L)
+    for (pg in seq_len(nPages)) {
+      Plots(
+        data = list(series = sk, flag = rk$flag, id = do.call(paste, rk[.stabilityKeys])),
+        fn = .stabilityPanels, window = window, page = pg,
+        filename = paste0("stability_", k, "_p", pg), path = figDir,
+        types = P(sim)$.plots, ggsaveArgs = list(width = 16, height = 10, units = "in")
+      )
+    }
+  }
+  Plots(
+    data = res, fn = .stabilitySummary, minChange = P(sim)$stabilityMinChange,
+    filename = "stability_summary", path = figDir,
+    types = P(sim)$.plots, ggsaveArgs = list(width = 10, height = max(4, 0.25 * length(unique(res$metric))), units = "in")
+  )
+  invisible(sim)
 }
 
 .inputObjects <- function(sim) {

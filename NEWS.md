@@ -2,6 +2,22 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## Current condition on the figures; a stability check (multi mode)
+
+- The ribbon and boxplot figures of the landscape and patch metrics now draw the current condition as a
+  dashed red line labelled "current condition", and each landscape-metric layer gets
+  `current_condition_overview.png`: every metric on one 0-1 axis (0 = NRV minimum, 1 = NRV maximum) with
+  the NRV mean and the current condition. The overview is saved through `SpaDES.core::Plots()`.
+- New event `postprocess_stability` asks whether the run is long enough: for each landscape metric, each
+  patch metric by class and the area burned per `summaryInterval` block (from burnSummaries'
+  `burnSummaries_fireSizes_allReps.csv`) it tests for a directional trend over the last
+  `stabilityWindow` (default 0.5) of `summaryPeriod`, Mann-Kendall on all reps pooled with the
+  Theil-Sen slope. A series is "still changing" when the trend is significant (`stabilityAlpha`, 0.05)
+  and the fitted change over the window is more than `stabilityMinChange` (0.10) of its NRV range.
+  It writes `csv/stability/stability.csv` (metric, class, slope, p, change as % of range, flag), panels
+  of each series with the window shaded and the verdict in the title, a summary figure (both through
+  `Plots()`), and logs "N of M metrics still changing; consider a longer run".
+
 ## Multi mode: replicate counts and file locations
 
 - `InitMulti()` takes each file once from `outputsDF`. A file registered twice (the last year is saved
