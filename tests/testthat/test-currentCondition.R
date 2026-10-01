@@ -53,3 +53,14 @@ test_that("the overview puts every metric on one 0-1 axis, and shows what is out
   expect_s3_class(gg, "ggplot")
   expect_no_error(ggplot2::ggplot_build(gg))
 })
+
+test_that("the overview's NRV range and the current-condition position come from the window only", {
+  ## a transient at time 100 (values 100-120) before the window 200-300 (values 8-12)
+  env <- data.frame(time = c(100, 200, 300), poly = "ELF", metric = "m",
+                    mean = c(110, 10, 10), min = c(100, 8, 8), max = c(120, 12, 12))
+  cc <- data.frame(poly = "ELF", metric = "m", mean = 11)
+  d <- .currentConditionOverview(list(env = env, cc = cc, window = c(200, 300)))$data
+  expect_equal(c(d$lo, d$hi), c(8, 12))
+  expect_equal(d$ccPos, 0.75)
+  expect_equal(d$midPos, 0.5)
+})

@@ -22,8 +22,8 @@ test_that("a linear trend is still changing, with the right size", {
   r <- .trendStability(s, keys, window)
   expect_identical(r$flag, "still changing")
   expect_equal(r$slope, 0.01, tolerance = 0.1)
-  ## the NRV range is the whole series' (about 10 here); the fitted change over 500 years is 5
-  expect_equal(r$changePctRange, 100 * 5 / diff(range(s$value)), tolerance = 0.1)
+  ## the NRV range is the window's (5 to 10 here); the fitted change over 500 years is 5
+  expect_equal(r$changePctRange, 100 * 5 / diff(range(s$value[s$time >= window[1]])), tolerance = 0.1)
 })
 
 test_that("a noisy flat series is stable", {
@@ -32,14 +32,14 @@ test_that("a noisy flat series is stable", {
   }
 })
 
-test_that("a significant but small trend is stable: the change must be more than 10% of the NRV range", {
-  ## a big early transient sets the NRV range (about 50); the last half drifts by 2 (4% of it)
-  f <- function(t) 10 + ifelse(t < 500, 50 * (500 - t) / 500, 0) + 0.004 * pmax(t - 500, 0)
+test_that("the NRV range is the window's: a transient before the window does not hide a trend in it", {
+  ## values before the window run from 60 down to 10; inside it they drift from 10 to 15
+  f <- function(t) 10 + ifelse(t < 500, 50 * (500 - t) / 500, 0) + 0.01 * pmax(t - 500, 0)
   s <- makeSeries(f, sd = 0.01)
   r <- .trendStability(s, keys, window)
-  expect_lt(r$p, 0.05)
-  expect_lt(abs(r$changePctRange), 10)
-  expect_identical(r$flag, "stable")
+  ## the fitted change over the window (5) against the window's range (about 5), not the whole series' (about 55)
+  expect_equal(r$changePctRange, 100, tolerance = 0.1)
+  expect_identical(r$flag, "still changing")
 })
 
 test_that("an early transient that has levelled off does not count: only the window is tested", {
