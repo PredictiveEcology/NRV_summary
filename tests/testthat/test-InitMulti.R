@@ -20,7 +20,9 @@ makeOutputsDF <- function(root, reps = 1:2, repeatLastYear = 3L) {
     ## by the summary modules' end-of-run save.
     c(f, rep(grep("year3020", f, value = TRUE), repeatLastYear - 1L))
   }
-  data.table::data.table(file = unlist(lapply(reps, perRep)), saveTime = 3020)
+  ## in the order the files were saved, which is not year order for every kind of file
+  set.seed(42)
+  data.table::data.table(file = sample(unlist(lapply(reps, perRep))), saveTime = 3020)
 }
 
 makeMultiSim <- function(outputsDF, reps = 1:2) {
@@ -56,6 +58,14 @@ test_that("each replicate contributes each analysis year once, however often a f
   years <- sub(".*_year(\\d+)\\..*", "\\1", m$vtm)
   expect_true(all(table(years) == 2L))
   expect_identical(unname(lengths(.filesByRep(m$vtm))), c(4L, 4L))
+})
+
+test_that("the veg-type and stand-age maps of a rep are listed in the same year order", {
+  ## the patch metrics pair them by position
+  root <- withr::local_tempdir()
+  m <- modOf(runInit(makeMultiSim(makeOutputsDF(root), reps = 1:2)))
+  yearsByRep <- function(files) lapply(.filesByRep(files), function(f) sub(".*_year(\\d+)\\..*", "\\1", f))
+  expect_identical(yearsByRep(m$vtm), yearsByRep(m$sam))
 })
 
 test_that("year-0 and flammable rasters come from where the replicate's outputs are", {

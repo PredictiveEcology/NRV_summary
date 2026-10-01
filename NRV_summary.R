@@ -371,7 +371,10 @@ InitMulti <- function(sim) {
   ## a file saved more than once (e.g. the last year, by the sim's own save and again at the end of
   ## the run) is registered more than once in outputsDF; it is still one file per rep and year, and
   ## repeating it would repeat that rep's row at that time in the envelopes (n_reps > number of reps).
-  outFiles <- unique(sim$outputsDF$file)
+  ## Sorted, so each rep's veg-type and stand-age maps are listed in the same year order: the patch
+  ## metrics pair them by position (outputsDF is in the order the files were saved, which is not
+  ## the same for the two kinds).
+  outFiles <- sort(unique(sim$outputsDF$file))
   mod$allReps <- dirnamesFromSet(outFiles, P(sim)$reps)
 
   ## assigned back: P(sim)$simTimes is read downstream, not just for padding
@@ -421,37 +424,22 @@ InitMulti <- function(sim) {
     mod$ftsf0 <- .maskCC(mod$ftsf0, urbanMask, file.path(ccDir, "cc_rstTimeSinceFire.tif"))
   }
 
+  ## the files of one kind in the reps: from outputsDF, or by searching `outputPath(sim)`
+  filesOf <- function(regexp) {
+    files <- if (mod$useOutputs) {
+      grep(regexp, outFiles, value = TRUE)
+    } else {
+      as.character(fs::dir_ls(outputPath(sim), regexp = regexp, recurse = 1, type = "file"))
+    }
+    grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = files, value = TRUE)
+  }
+  yearsPattern <- paste(mod$analysesOutputsTimes, collapse = "|")
+  cdpgm <- grep(yearsPattern, x = filesOf("cohortData|pixelGroupMap"), value = TRUE)
+  mod$allouts <- grep("gri|png|txt|xml", x = filesOf("vegType|standAge"), value = TRUE, invert = TRUE)
+
   if (mod$useOutputs) {
-    cdpgm <- grep(
-      value = TRUE,
-      outFiles,
-      pattern = "cohortData|pixelGroupMap"
-    ) |>
-      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
-      grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
-    
-    mod$allouts2 <- mod$allouts <- grep(value = TRUE,
-      outFiles,
-      pattern = "vegType|standAge") |>
-      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
-      grep("gri|png|txt|xml", x = _, value = TRUE, invert = TRUE)
+    mod$allouts2 <- mod$allouts
   } else {
-    cdpgm <- fs::dir_ls(
-      outputPath(sim),
-      regexp = "cohortData|pixelGroupMap",
-      recurse = 1,
-      type = "file"
-    ) |>
-      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
-      grep(paste(mod$analysesOutputsTimes, collapse = "|"), x = _, value = TRUE)
-    mod$allouts <- fs::dir_ls(
-      outputPath(sim),
-      regexp = "vegType|standAge",
-      recurse = 1,
-      type = "file"
-    ) |>
-      grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"), x = _, value = TRUE) |>
-      grep("gri|png|txt|xml", x = _, value = TRUE, invert = TRUE)
     mod$allouts2 <- paste(
       paste0(
         "year",
@@ -463,9 +451,9 @@ InitMulti <- function(sim) {
       collapse = "|"
     ) |>
       grep(pattern = _, x = mod$allouts, value = TRUE, invert = TRUE)
-    
+
     filesUserHas <- c(cdpgm, mod$allouts2)
-    
+
     dirsExpected <- file.path(outputPath(sim), mod$allReps)
     filesExpected <- as.character(sapply(dirsExpected, function(d) {
       c(
@@ -475,9 +463,9 @@ InitMulti <- function(sim) {
         file.path(d, sprintf("vegTypeMap_year%04d.tif", mod$analysesOutputsTimes))
       )
     }))
-    
+
     filesNeeded <- data.frame(file = filesExpected, exists = filesExpected %in% filesUserHas)
-    
+
     if (!all(filesNeeded$exists)) {
       missing <- filesNeeded[filesNeeded$exists == FALSE, ]$file
       stop(
