@@ -13,7 +13,10 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
   `burnSummaries_fireSizes_allReps.csv`) it tests for a directional trend over the last
   `stabilityWindow` (default 0.5) of `summaryPeriod`, Mann-Kendall on all reps pooled with the
   Theil-Sen slope. A series is "still changing" when the trend is significant (`stabilityAlpha`, 0.05)
-  and the fitted change over the window is more than `stabilityMinChange` (0.10) of its NRV range.
+  and the fitted change over the window is more than `stabilityMinChange` (0.10) of its NRV range. The
+  NRV range is the range of the values inside the stability window, everywhere it is used (this check
+  and the overview figure); all times are still summarised, saved and shown, and the window is shaded
+  on the envelope and time-series figures.
   It writes `csv/stability/stability.csv` (metric, class, slope, p, change as % of range, flag), panels
   of each series with the window shaded and the verdict in the title, a summary figure (both through
   `Plots()`), and logs "N of M metrics still changing; consider a longer run".

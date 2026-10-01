@@ -93,7 +93,7 @@ defineModule(sim, list(
     defineParameter("stabilityMinChange", "numeric", 0.10, 0, 1,
                     paste("(mode = 'multi') a series is flagged 'still changing' only if its fitted change",
                           "across the stability window exceeds this fraction of the series' NRV range",
-                          "(its largest minus smallest value over all reps and summary times), as well as",
+                          "(its largest minus smallest value over all reps within the window), as well as",
                           "being a significant trend.")),
     defineParameter("stabilityWindow", "numeric", 0.5, 0, 1,
                     paste("(mode = 'multi') the last fraction of `summaryPeriod` over which the stability",
@@ -1253,9 +1253,12 @@ makeAnimation <- function(sim) {
     gg <- switch(
       task[["plotter"]],
       envelope = .addCurrentCondition(
-        nrvtools::plot_nrv_envelope(
-          task[["df"]], type = task[["type"]], facet = task[["facet"]],
-          ylab = task[["ylab"]], title = task[["title"]], page = task[["page"]]
+        .markWindow(
+          nrvtools::plot_nrv_envelope(
+            task[["df"]], type = task[["type"]], facet = task[["facet"]],
+            ylab = task[["ylab"]], title = task[["title"]], page = task[["page"]]
+          ),
+          task[["window"]], discrete = identical(task[["type"]], "boxplot")
         ),
         task[["cc"]], task[["facet"]]
       ),
@@ -1285,6 +1288,9 @@ makeAnimation <- function(sim) {
   addCC <- .addCurrentCondition
   environment(addCC) <- list2env(list(.ccColour = .ccColour), parent = globalenv())
   assign(".addCurrentCondition", addCC, envir = environment(render_one))
+  markWindow <- .markWindow
+  environment(markWindow) <- new.env(parent = globalenv())
+  assign(".markWindow", markWindow, envir = environment(render_one))
 
   nWorkers <- .plotWorkers(sim, length(tasks))
   message("NRV_summary: rendering ", length(tasks), " figure(s) across ", nWorkers, " worker(s)")
@@ -1326,6 +1332,7 @@ plotFun <- function(sim) {
     }
     d <- .ppFigDir(sim, kind, p) ## create the output dir on the main worker
     ccAll <- mod[[paste0(LandWebUtils::refCodeFor(kind, p), "_CC")]] ## the current-condition snapshot
+    window <- .stabilityWindow(sim)
     tasks <- list()
 
     if (perSubregion) {
@@ -1343,7 +1350,7 @@ plotFun <- function(sim) {
           cc <- if (!is.null(ccAll)) ccAll[ccAll$poly == poly & ccAll$metric == met, , drop = FALSE]
           for (type in c("ribbon", "boxplot")) {
             tasks[[length(tasks) + 1L]] <- list(
-              plotter = "envelope", df = sub, type = type, cc = cc,
+              plotter = "envelope", df = sub, type = type, cc = cc, window = window,
               facet = c("class", "metric.1"), ylab = ylab, title = ttl, page = NULL,
               file = file.path(d, paste0(safe(poly), " ", safe(met), "_", type, ".png")),
               width = 16, height = 10
@@ -1371,7 +1378,7 @@ plotFun <- function(sim) {
         if (is.null(nPages) || is.na(nPages)) nPages <- 1L
         for (pg in seq_len(nPages)) {
           tasks[[length(tasks) + 1L]] <- list(
-            plotter = "envelope", df = sub, type = type,
+            plotter = "envelope", df = sub, type = type, window = window,
             facet = c("poly", "class", "metric.1"), ylab = ylab, title = ttl, page = pg,
             file = file.path(d, paste0(safe(met), "_", type, "_p", pg, ".png")),
             width = 16, height = 10
@@ -1393,7 +1400,7 @@ plotFun <- function(sim) {
       cc <- mod[[paste0(LandWebUtils::refCodeFor("lm", p), "_CC")]]
       if (!is.null(env) && nrow(env) && !is.null(cc) && nrow(cc)) {
         Plots(
-          data = list(env = env, cc = cc), fn = .currentConditionOverview,
+          data = list(env = env, cc = cc, window = .stabilityWindow(sim)), fn = .currentConditionOverview,
           filename = "current_condition_overview", path = .ppFigDir(sim, "lm", p),
           types = P(sim)$.plots, ggsaveArgs = list(width = 10, height = 8, units = "in")
         )
@@ -1451,13 +1458,28 @@ plotFun <- function(sim) {
     ggplot2::theme(legend.position = "bottom")
 }
 
+## Shade the stability window (the times that define the NRV) on an envelope figure.
+.markWindow <- function(gg, window, discrete = FALSE) {
+  rng <- if (discrete) {
+    ## boxplots have time as a factor: the window spans the positions of its times
+    times <- sort(unique(gg$data$time))
+    pos <- which(times >= window[1L] & times <= window[2L])
+    c(min(pos) - 0.5, max(pos) + 0.5)
+  } else {
+    window
+  }
+  gg + ggplot2::annotate("rect", xmin = rng[1L], xmax = rng[2L], ymin = -Inf, ymax = Inf,
+                         alpha = 0.12, fill = "orange") +
+    ggplot2::labs(caption = "shaded: the stability window, which defines the NRV")
+}
+
 ## Where the current condition falls within the NRV envelope, for every landscape metric on one axis.
-## `data` = list(env =, cc =): the envelope over the summary times (min, max, mean per time) and the
-## current-condition snapshot (mean). Each metric is rescaled so its NRV range (smallest min to largest
-## max over the summary times) is 0-1: the grey bar is the range, the black tick the NRV mean, the red
+## `data` = list(env =, cc =, window =): the envelope over the summary times (min, max, mean per time), the
+## current-condition snapshot (mean) and the stability window. Each metric is rescaled so its NRV range
+## (smallest min to largest max over the times in the window) is 0-1: the grey bar is the range, the black tick the NRV mean, the red
 ## dot the current condition. A dot outside 0-1 is outside the NRV.
 .currentConditionOverview <- function(data) {
-  env <- data$env
+  env <- data$env[data$env$time >= data$window[1L] & data$env$time <= data$window[2L], , drop = FALSE]
   cc <- data$cc
   byMetric <- split(env, paste(env$poly, env$metric, sep = "\r"))
   nrv <- do.call(rbind, lapply(byMetric, function(e) {
@@ -1491,8 +1513,8 @@ plotFun <- function(sim) {
 ## rep or a skewed metric does not decide the verdict, as it can with an OLS slope; and pooling the reps
 ## keeps the spread among reps in the test, so a noisy series needs a larger trend to be significant.
 ## A series is "still changing" when the trend is significant AND the fitted change over the window is
-## more than `minChange` of the series' NRV range (largest minus smallest value over all reps and
-## times); a significant but tiny trend is not worth a longer run. Fewer than 3 distinct times in the
+## more than `minChange` of the series' NRV range (largest minus smallest value over all reps in the
+## window: the window is what defines the NRV, not the approach to it); a significant but tiny trend is not worth a longer run. Fewer than 3 distinct times in the
 ## window cannot be tested ("insufficient").
 
 ## one series: Mann-Kendall p-value and Theil-Sen slope of `value` against `time`
@@ -1521,7 +1543,7 @@ plotFun <- function(sim) {
                  p = NA_real_, changePctRange = NA_real_, flag = "insufficient")
     if (out$nTimes >= 3L) {
       tr <- .senKendall(w$time, w$value)
-      nrvRange <- diff(range(s$value))
+      nrvRange <- diff(range(w$value)) ## the NRV is the window's values, not the transient before it
       out$slope <- tr[["slope"]]
       out$p <- tr[["p"]]
       out$changePctRange <- if (nrvRange > 0) 100 * out$slope * diff(range(w$time)) / nrvRange else 0

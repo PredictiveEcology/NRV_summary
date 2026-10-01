@@ -45,7 +45,7 @@ test_that("the overview puts every metric on one 0-1 axis, and shows what is out
   )
   ## NRV range of each metric is 8 to 12; the mean is 10
   cc <- data.frame(poly = "ELF", metric = c("m_in", "m_out"), mean = c(11, 20))
-  gg <- .currentConditionOverview(list(env = env, cc = cc))
+  gg <- .currentConditionOverview(list(env = env, cc = cc, window = c(100, 300)))
   d <- gg$data
   expect_equal(d$ccPos[d$metric == "m_in"], 0.75)
   expect_equal(d$ccPos[d$metric == "m_out"], 3)  ## outside the envelope: beyond 1
@@ -63,4 +63,13 @@ test_that("the overview's NRV range and the current-condition position come from
   expect_equal(c(d$lo, d$hi), c(8, 12))
   expect_equal(d$ccPos, 0.75)
   expect_equal(d$midPos, 0.5)
+})
+
+test_that("the stability window is shaded on ribbon and boxplot envelopes", {
+  for (type in c("ribbon", "boxplot")) {
+    gg <- nrvtools::plot_nrv_envelope(envelope(), type = type, facet = "class")
+    b <- ggplot2::ggplot_build(.markWindow(gg, c(150, 300), discrete = type == "boxplot"))
+    r <- b$data[[length(b$data)]]
+    expect_equal(as.numeric(c(unique(r$xmin), unique(r$xmax))), if (type == "ribbon") c(150, 300) else c(1.5, 3.5))
+  }
 })
