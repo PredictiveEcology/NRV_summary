@@ -9,7 +9,8 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
   `summaryPeriod = start(sim) + c(700L, 1000L)` for the old summary years.
 - New parameter `nrvWindow` (default 0.3, above 0 and at most 1): the NRV is the last `nrvWindow` fraction of
   `summaryPeriod`, so a 1000-year run has the NRV of years 700-1000, as the old default did. The NRV range and
-  `current_condition_overview.png` use only the summary times in it (`.nrvPeriod()`).
+  `current_condition_overview.png` use only the summary times in it (`.nrvPeriod()`). The LandWeb summaries (leading
+  species, large patches), which pool over summary years, also use only the NRV years.
 - Envelope figures show all of `summaryPeriod` and shade the NRV years ("shaded: NRV years"). The stability
   check keeps its own `stabilityWindow`, also a fraction of `summaryPeriod`.
 

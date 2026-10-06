@@ -114,3 +114,8 @@ test_that("summaryPeriod defaults to the whole run", {
   sim <- initSim(start = 2020, end = 3020)
   expect_equal(as.numeric(SpaDES.core::P(sim, module = "NRV_summary")$summaryPeriod), c(2020, 3020))
 })
+
+test_that("pooled NRV distributions use only the files of the NRV years", {
+  f <- file.path("rep01", c(sprintf("vegTypeMap_year%04d.tif", c(0, 100, 600, 700, 1000)), "other.tif"))
+  expect_equal(basename(.filesInPeriod(f, c(700, 1000))), sprintf("vegTypeMap_year%04d.tif", c(700, 1000)))
+})
