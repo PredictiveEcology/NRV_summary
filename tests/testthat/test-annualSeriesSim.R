@@ -75,11 +75,11 @@ test_that("multi mode reads the reps' annual series and writes the autocorrelati
   msgs <- testthat::capture_messages(
     suppressWarnings(SpaDES.core::spades(sim, events = list(NRV_summary = c("init", "postprocess_autocorr")), debug = FALSE))
   )
-  expect_match(paste(msgs, collapse = ""), "recommended thinning [0-9]+ years")
+  expect_match(paste(msgs, collapse = ""), "correlation r = .*fitted autocorrelation time tau = .*recommended thinning [0-9]+ years")
   csv <- list.files(root, "autocorrelation.csv", recursive = TRUE, full.names = TRUE)
   expect_length(csv, 1L)
   d <- utils::read.csv(csv)
-  expect_true(all(c("series", "rep", "tau", "lagBelow0.1", "label", "recommendedThin") %in% names(d)))
+  expect_true(all(c("series", "phi", "tau", "tauGeyer", "ar1Misfit", "r", "rMin", "rMax", "label", "recommendedThin") %in% names(d)))
   expect_true("Proportion of forest young" %in% d$label)
   expect_gt(d$recommendedThin[1], 5)
   expect_length(list.files(root, "autocorrelation.png", recursive = TRUE), 1L)
