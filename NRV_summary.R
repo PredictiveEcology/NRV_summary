@@ -103,8 +103,9 @@ defineModule(sim, list(
                     "simulation time interval at which to take 'snapshots' used for summary analyses."),
     defineParameter("summaryPeriod", "integer", start(sim) + c(700L, 1000L), NA, NA,
                     "lower and upper end of the range of simulation times used for summary analyses."),
-    defineParameter("timeSeriesTimes", "numeric", start(sim) + 601:650, NA, NA,
-                    "simulation times for which to build time series animations."),
+    defineParameter("timeSeriesTimes", "numeric", NA_real_, NA, NA,
+                    paste("simulation times for which to build time series animations; default (NA) is",
+                          "start + 601:650 when the run is that long, otherwise the last 50 years of the run.")),
     defineParameter("vegLeadingProportion", "numeric", LandR::leadingSpeciesProp(),
                     0.0, 1.0,
                     desc = paste("a number that defines whether a species is leading for a given pixel.",
@@ -171,6 +172,13 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
 
       if (min(P(sim)$summaryPeriod) < start(sim) || max(P(sim)$summaryPeriod) > end(sim)) {
         stop("summaryPeriod values are outside the range of simulation times")
+      }
+      if (all(is.na(P(sim)$timeSeriesTimes))) {
+        P(sim)$timeSeriesTimes <- if (end(sim) >= start(sim) + 650) {
+          start(sim) + 601:650
+        } else {
+          seq(max(start(sim), end(sim) - 49), end(sim))
+        }
       }
       if (min(P(sim)$timeSeriesTimes) < start(sim) || max(P(sim)$timeSeriesTimes) > end(sim)) {
         stop("timeSeriesTimes values are outside the range of simulation times")

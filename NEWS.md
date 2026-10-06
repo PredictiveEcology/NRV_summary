@@ -2,6 +2,13 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## `timeSeriesTimes` default fits short runs
+
+- `timeSeriesTimes` now defaults to `NA`, resolved at init to `start + 601:650` when the run is that
+  long and to the last 50 years of the run otherwise. The fixed `start + 601:650` default made every run
+  shorter than 650 years stop with "timeSeriesTimes values are outside the range of simulation times".
+  An explicit value outside the run still stops.
+
 ## Current condition on the figures; a stability check (multi mode)
 
 - The ribbon and boxplot figures of the landscape and patch metrics now draw the current condition as a
