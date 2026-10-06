@@ -154,6 +154,10 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
   with `file does not exist: .../vegTypeMap_year0.tif`), and (b) the un-wired `"CC SAM"` dependency.
   The CC file paths are resolved once in `InitMulti`.
 
+## Stability check ignores patch-level rows
+
+- The stability series reader kept the patch-level rows of the pm aggregates (one per patch), so a series had many values per rep and time and the check failed. It now keeps only the landscape and class levels (`.seriesLevels()`).
+
 # NRV_summary 2.0.0
 
 This is a breaking release that adopts the Arrow-native, memory-bounded NRV

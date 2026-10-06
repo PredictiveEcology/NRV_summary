@@ -1591,6 +1591,12 @@ plotFun <- function(sim) {
   blocks
 }
 
+## One value per rep x time per series: patch-level rows (one per patch) are not a series, only the
+## landscape and class levels are.
+.seriesLevels <- function(raw) {
+  raw[raw$level %in% c("landscape", "class"), , drop = FALSE]
+}
+
 ## The series the stability check looks at: landscape and patch metrics per rep (from the _aggregates
 ## parquet), and the area burned per block when burnSummaries wrote it. Columns:
 ## kind, layer, poly, level, class, metric, rep, time, value.
@@ -1603,7 +1609,7 @@ plotFun <- function(sim) {
       if (is.null(raw)) {
         return(NULL)
       }
-      raw <- as.data.frame(dplyr::collect(raw))
+      raw <- .seriesLevels(as.data.frame(dplyr::collect(raw)))
       if (kind == "pm") raw <- nrvtools::label_vegtype_classes(raw, vtmRAT)
       raw$class <- as.character(raw$class)
       data.frame(kind = kind, layer = p, raw[, c("poly", "level", "class", "metric", "rep", "time", "value")])
