@@ -2,6 +2,16 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## The NRV is the summary period; figures show real scales and full metric names
+
+- The NRV range (min, max and mean of the envelope) uses all times in `summaryPeriod` again, not only the
+  last `stabilityWindow` of it. `stabilityWindow` now only sets the span of the stability check; the
+  "shaded: the stability window, which defines the NRV" shading is removed from the envelope figures.
+- `current_condition_overview.png` is no longer rescaled to 0-1: one facet per metric on its own scale,
+  grey bar from the NRV minimum to maximum, a tick at the NRV mean and a red dot at the current condition.
+- Figure titles, facets and axes show full metric names ("Aggregation index", "Mean patch area",
+  "Median stand age", ...) from one lookup; CSVs and file names keep the codes.
+
 ## `timeSeriesTimes` default fits short runs
 
 - `timeSeriesTimes` now defaults to `NA`, resolved at init to `start + 601:650` when the run is that
@@ -13,17 +23,14 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 - The ribbon and boxplot figures of the landscape and patch metrics now draw the current condition as a
   dashed red line labelled "current condition", and each landscape-metric layer gets
-  `current_condition_overview.png`: every metric on one 0-1 axis (0 = NRV minimum, 1 = NRV maximum) with
-  the NRV mean and the current condition. The overview is saved through `SpaDES.core::Plots()`.
+  `current_condition_overview.png`: every metric with the NRV range, the NRV mean and the current condition. The overview is saved through `SpaDES.core::Plots()`.
 - New event `postprocess_stability` asks whether the run is long enough: for each landscape metric, each
   patch metric by class and the area burned per `summaryInterval` block (from burnSummaries'
   `burnSummaries_fireSizes_allReps.csv`) it tests for a directional trend over the last
   `stabilityWindow` (default 0.5) of `summaryPeriod`, Mann-Kendall on all reps pooled with the
   Theil-Sen slope. A series is "still changing" when the trend is significant (`stabilityAlpha`, 0.05)
-  and the fitted change over the window is more than `stabilityMinChange` (0.10) of its NRV range. The
-  NRV range is the range of the values inside the stability window, everywhere it is used (this check
-  and the overview figure); all times are still summarised, saved and shown, and the window is shaded
-  on the envelope and time-series figures.
+  and the fitted change over the window is more than `stabilityMinChange` (0.10) of the series' range
+  within the window.
   It writes `csv/stability/stability.csv` (metric, class, slope, p, change as % of range, flag), panels
   of each series with the window shaded and the verdict in the title, a summary figure (both through
   `Plots()`), and logs "N of M metrics still changing; consider a longer run".
@@ -146,6 +153,10 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
   where `landscapeMetrics` read the CC VTM before `patchMetrics` wrote it (a standalone run errored
   with `file does not exist: .../vegTypeMap_year0.tif`), and (b) the un-wired `"CC SAM"` dependency.
   The CC file paths are resolved once in `InitMulti`.
+
+## Stability check ignores patch-level rows
+
+- The stability series reader kept the patch-level rows of the pm aggregates (one per patch), so a series had many values per rep and time and the check failed. It now keeps only the landscape and class levels (`.seriesLevels()`).
 
 # NRV_summary 2.0.0
 

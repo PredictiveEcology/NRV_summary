@@ -80,3 +80,19 @@ test_that("area burned per block counts blocks with no fire as zero", {
   expect_equal(b$value[b$rep == 2], c(7, 0, 0))
   expect_equal(unique(b$time), c(2020, 2120, 2220))
 })
+
+test_that("the stability series keep landscape and class rows, not one row per patch", {
+  g <- expand.grid(rep = 1:2, time = c(0, 100))
+  raw <- rbind(
+    data.frame(level = "landscape", class = NA, metric = "lsm_l_ai", g, value = 1),
+    data.frame(level = "class", class = "Pine", metric = "lsm_c_ai", g, value = 2),
+    data.frame(level = "patch", class = "Pine", metric = "lsm_p_area", g[rep(seq_len(nrow(g)), each = 3), ], value = 3)
+  )
+  raw$poly <- "a"
+  kept <- .seriesLevels(raw)
+  expect_setequal(kept$level, c("landscape", "class"))
+  ## exactly one value per rep x time per series
+  key <- c("level", "class", "metric", "rep", "time")
+  expect_false(anyDuplicated(kept[key]) > 0L)
+  expect_true(anyDuplicated(raw[key]) > 0L)
+})
