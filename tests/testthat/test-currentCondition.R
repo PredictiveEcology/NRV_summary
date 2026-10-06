@@ -73,3 +73,44 @@ test_that("the overview facets carry the full metric names", {
   b <- ggplot2::ggplot_build(.currentConditionOverview(list(env = overviewEnv(), cc = cc, period = c(100, 300))))
   expect_setequal(as.character(b$layout$layout$panel), c("Aggregation index", "Mean patch area"))
 })
+
+## ---- the NRV is the last `nrvWindow` of the summary period ----
+initSim <- function(start = 0, end = 1000, ...) {
+  SpaDES.core::simInit(times = list(start = start, end = end),
+                       params = list(NRV_summary = list(mode = "multi", reps = 1L, ...)),
+                       modules = moduleName,
+                       objects = list(reportingPolygons = list(ELF = "placeholder")),
+                       paths = list(modulePath = modulePath))
+}
+
+## the module's own functions find P() in the module environment at run time; here it comes from SpaDES.core
+nrvPeriod <- function(sim) {
+  f <- .nrvPeriod
+  environment(f) <- list2env(list(P = SpaDES.core::P), parent = environment(.nrvPeriod))
+  f(sim)
+}
+
+test_that(".nrvPeriod is the last nrvWindow fraction of summaryPeriod", {
+  expect_equal(nrvPeriod(initSim(summaryPeriod = c(0L, 1000L))), c(700, 1000))
+  expect_equal(nrvPeriod(initSim(end = 300, summaryPeriod = c(0L, 300L))), c(210, 300))
+  expect_equal(nrvPeriod(initSim(end = 300, summaryPeriod = c(0L, 300L), nrvWindow = 1)), c(0, 300))
+})
+
+test_that("the NRV range ignores times before the NRV period", {
+  r <- .nrvRange(overviewEnv(), period = c(200, 300))
+  expect_equal(c(r$lo[r$metric == "ai"], r$hi[r$metric == "ai"]), c(8, 12)) ## not the time-100 transient
+})
+
+test_that("envelope figures shade the NRV years, on both time axes", {
+  for (type in c("ribbon", "boxplot")) {
+    gg <- .addNrvShading(nrvtools::plot_nrv_envelope(envelope(), type = type, facet = "class"), c(200, 300))
+    rect <- ggplot2::ggplot_build(gg)$data[[1]] ## drawn first, behind the data; one per panel
+    expect_equal(gg$labels$caption, "shaded: NRV years")
+    expect_equal(unique(as.numeric(c(rect$xmin, rect$xmax))), if (type == "boxplot") c(1.5, 3.5) else c(200, 300))
+  }
+})
+
+test_that("summaryPeriod defaults to the whole run", {
+  sim <- initSim(start = 2020, end = 3020)
+  expect_equal(as.numeric(SpaDES.core::P(sim, module = "NRV_summary")$summaryPeriod), c(2020, 3020))
+})
