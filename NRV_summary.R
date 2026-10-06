@@ -98,13 +98,19 @@ defineModule(sim, list(
     defineParameter("stabilityWindow", "numeric", 0.5, 0, 1,
                     paste("(mode = 'multi') the last fraction of `summaryPeriod` over which the stability",
                           "check looks for a directional trend (0.5 = the last half). A run whose",
-                          "metrics are still trending there needs to be longer. It does not define the NRV,",
-                          "which is all of `summaryPeriod`.")),
+                          "metrics are still trending there needs to be longer. It does not define the NRV",
+                          "(see `nrvWindow`).")),
+    defineParameter("nrvWindow", "numeric", 0.3, 0, 1,
+                    paste("the NRV is the last fraction of `summaryPeriod` (0.3 = the last 30%; in a 1000-year",
+                          "run, years 700-1000). Must be above 0 and at most 1. The NRV range and the current",
+                          "condition overview use only the summary times in it; the time-series figures still",
+                          "show all of `summaryPeriod`, with the NRV years shaded.")),
     defineParameter("summaryInterval", "integer", 100L, NA, NA,
                     "simulation time interval at which to take 'snapshots' used for summary analyses."),
-    defineParameter("summaryPeriod", "integer", start(sim) + c(700L, 1000L), NA, NA,
-                    paste("lower and upper end of the range of simulation times used for summary analyses;",
-                          "this period is the NRV.")),
+    defineParameter("summaryPeriod", "integer", c(start(sim), end(sim)), NA, NA,
+                    paste("lower and upper end of the range of simulation times summarised and shown in the",
+                          "time-series figures; default is the whole run. The NRV is the last `nrvWindow`",
+                          "fraction of it.")),
     defineParameter("timeSeriesTimes", "numeric", NA_real_, NA, NA,
                     paste("simulation times for which to build time series animations; default (NA) is",
                           "start + 601:650 when the run is that long, otherwise the last 50 years of the run.")),
@@ -174,6 +180,9 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
 
       if (min(P(sim)$summaryPeriod) < start(sim) || max(P(sim)$summaryPeriod) > end(sim)) {
         stop("summaryPeriod values are outside the range of simulation times")
+      }
+      if (!(P(sim)$nrvWindow > 0 && P(sim)$nrvWindow <= 1)) {
+        stop("nrvWindow must be above 0 and at most 1")
       }
       if (all(is.na(P(sim)$timeSeriesTimes))) {
         P(sim)$timeSeriesTimes <- if (end(sim) >= start(sim) + 650) {
@@ -608,6 +617,13 @@ InitMulti <- function(sim) {
   split(files, basename(dirname(files)))
 }
 
+## The files of `files` (named `..._year<YYYY>.<ext>`) whose year is within `period`. Used for the pooled
+## (over time) NRV distributions, which cover the NRV years only.
+.filesInPeriod <- function(files, period) {
+  yr <- as.integer(sub("^.*_year([0-9]+)\\.[^.]*$", "\\1", basename(files)))
+  files[!is.na(yr) & yr >= min(period) & yr <= max(period)]
+}
+
 ## TRUE iff `root` already holds a `replicate=<id>/*.parquet` partition for EVERY requested repID,
 ## i.e. the parquet dataset is complete and can be reused instead of recomputed.
 .aggComplete <- function(root, repIDs) {
@@ -849,13 +865,15 @@ landWebMetrics <- function(sim) {
 
   studyAreaReporting <- sf::st_as_sf(sim$studyAreaReporting)
   funList <- default_landweb_metrics() ## TODO: pass this further up via parameter funList_lw
-  idCols <- c("poly", "level", "class", "metric", "metric.1") ## pool across rep x summary year (no time)
+  idCols <- c("poly", "level", "class", "metric", "metric.1") ## pool across rep x NRV year (no time)
 
   oldPlan <- .planWithWorkers(pemisc::optimalClusterNum(5000, length(fvtm)))
   on.exit(future::plan(oldPlan), add = TRUE)
 
-  vtmByRep <- .filesByRep(fvtm)
-  tsfByRep <- .filesByRep(ftsf)
+  ## pooled over summary years, so these are NRV distributions: only the NRV years
+  nrvPeriod <- .nrvPeriod(sim)
+  vtmByRep <- .filesByRep(.filesInPeriod(fvtm, nrvPeriod))
+  tsfByRep <- .filesByRep(.filesInPeriod(ftsf, nrvPeriod))
 
   lapply(
     mod$rptPolyNames,
@@ -1270,9 +1288,12 @@ makeAnimation <- function(sim) {
     gg <- switch(
       task[["plotter"]],
       envelope = .addCurrentCondition(
-        nrvtools::plot_nrv_envelope(
-          task[["df"]], type = task[["type"]], facet = task[["facet"]],
-          ylab = task[["ylab"]], title = task[["title"]], page = task[["page"]]
+        .addNrvShading(
+          nrvtools::plot_nrv_envelope(
+            task[["df"]], type = task[["type"]], facet = task[["facet"]],
+            ylab = task[["ylab"]], title = task[["title"]], page = task[["page"]]
+          ),
+          task[["nrvPeriod"]]
         ),
         task[["cc"]], task[["facet"]]
       ),
@@ -1344,6 +1365,7 @@ plotFun <- function(sim) {
     d <- .ppFigDir(sim, kind, p) ## create the output dir on the main worker
     ccAll <- mod[[paste0(LandWebUtils::refCodeFor(kind, p), "_CC")]] ## the current-condition snapshot
     tasks <- list()
+    nrvPeriod <- .nrvPeriod(sim)
 
     if (perSubregion) {
       ## One plot per (metric x reporting sub-polygon); the sub-polygon name (e.g. the individual
@@ -1360,7 +1382,7 @@ plotFun <- function(sim) {
           cc <- if (!is.null(ccAll)) ccAll[ccAll$poly == poly & ccAll$metric == met, , drop = FALSE]
           for (type in c("ribbon", "boxplot")) {
             tasks[[length(tasks) + 1L]] <- list(
-              plotter = "envelope", df = sub, type = type, cc = cc,
+              plotter = "envelope", df = sub, type = type, cc = cc, nrvPeriod = nrvPeriod,
               facet = c("class", "metric.1"), ylab = ylab, title = ttl, page = NULL,
               file = file.path(d, paste0(safe(poly), " ", safe(met), "_", type, ".png")),
               width = 16, height = 10
@@ -1388,7 +1410,7 @@ plotFun <- function(sim) {
         if (is.null(nPages) || is.na(nPages)) nPages <- 1L
         for (pg in seq_len(nPages)) {
           tasks[[length(tasks) + 1L]] <- list(
-            plotter = "envelope", df = sub, type = type,
+            plotter = "envelope", df = sub, type = type, nrvPeriod = nrvPeriod,
             facet = c("poly", "class", "metric.1"), ylab = ylab, title = ttl, page = pg,
             file = file.path(d, paste0(safe(met), "_", type, "_p", pg, ".png")),
             width = 16, height = 10
@@ -1410,7 +1432,7 @@ plotFun <- function(sim) {
       cc <- mod[[paste0(LandWebUtils::refCodeFor("lm", p), "_CC")]]
       if (!is.null(env) && nrow(env) && !is.null(cc) && nrow(cc)) {
         Plots(
-          data = list(env = env, cc = cc, period = P(sim)$summaryPeriod), fn = .currentConditionOverview,
+          data = list(env = env, cc = cc, period = .nrvPeriod(sim)), fn = .currentConditionOverview,
           filename = "current_condition_overview", path = .ppFigDir(sim, "lm", p),
           types = P(sim)$.plots, ggsaveArgs = list(width = 10, height = 8, units = "in")
         )
@@ -1489,8 +1511,38 @@ plotFun <- function(sim) {
     ggplot2::theme(legend.position = "bottom")
 }
 
+## The NRV years: the last `nrvWindow` of the summary period (a subset of it by construction)
+.nrvPeriod <- function(sim) .lastFraction(P(sim)$summaryPeriod, P(sim)$nrvWindow)
+
+## The last `fraction` of `period` (the summary period), as c(from, to)
+.lastFraction <- function(period, fraction) {
+  sp <- range(period)
+  c(sp[2L] - fraction * diff(sp), sp[2L])
+}
+
+## Shade the NRV years `period` on an envelope figure from `plot_nrv_envelope()`, behind the data. The
+## boxplot figure has a discrete time axis (one box per time), the ribbon figure a continuous one.
+.addNrvShading <- function(gg, period) {
+  if (is.null(gg) || !"time" %in% names(gg$data)) {
+    return(gg)
+  }
+  times <- sort(unique(gg$data$time))
+  inNrv <- times >= min(period) & times <= max(period)
+  if (!any(inNrv)) {
+    return(gg)
+  }
+  box <- any(vapply(gg$layers, function(l) inherits(l$geom, "GeomBoxplot"), logical(1L)))
+  x <- if (box) range(which(inNrv)) + c(-0.5, 0.5) else range(times[inNrv])
+  gg$layers <- c(
+    ggplot2::annotate("rect", xmin = x[1L], xmax = x[2L], ymin = -Inf, ymax = Inf,
+                      alpha = 0.15, fill = "orange"),
+    gg$layers
+  )
+  gg + ggplot2::labs(caption = "shaded: NRV years")
+}
+
 ## The NRV range of each poly x metric: smallest min, largest max and mean of the mean, over the
-## times of `period` (the summary period). `env` has poly, metric, time, mean, min and max.
+## times of `period` (the NRV years). `env` has poly, metric, time, mean, min and max.
 .nrvRange <- function(env, period) {
   env <- env[env$time >= min(period) & env$time <= max(period), , drop = FALSE]
   byMetric <- split(env, paste(env$poly, env$metric, sep = "\r"))
@@ -1501,8 +1553,8 @@ plotFun <- function(sim) {
 
 ## Where the current condition falls within the NRV, one facet per metric on its real scale.
 ## `data` = list(env =, cc =, period =): the envelope over the summary times (min, max, mean per time), the
-## current-condition snapshot (mean) and the summary period. The grey bar is the NRV range (smallest min to
-## largest max over the summary period), the black tick the NRV mean, the red dot the current condition.
+## current-condition snapshot (mean) and the NRV years. The grey bar is the NRV range (smallest min to
+## largest max over the NRV years), the black tick the NRV mean, the red dot the current condition.
 ## A dot beyond the bar is outside the NRV.
 .currentConditionOverview <- function(data) {
   nrv <- .nrvRange(data$env, data$period)
@@ -1516,7 +1568,7 @@ plotFun <- function(sim) {
     ggplot2::scale_colour_manual(values = .ccColour, name = NULL) +
     ggplot2::scale_shape_manual(values = c("NRV mean" = 124), name = NULL) +
     ggplot2::facet_wrap(~panel, scales = "free_x") +
-    ggplot2::labs(x = "metric value (grey bar: NRV range over the summary period)", y = NULL,
+    ggplot2::labs(x = "metric value (grey bar: NRV range over the NRV years)", y = NULL,
                   title = "Current condition relative to the NRV") +
     ggplot2::theme_bw(base_size = 9) +
     ggplot2::theme(legend.position = "bottom", axis.text.y = ggplot2::element_blank(),
@@ -1628,10 +1680,7 @@ plotFun <- function(sim) {
 .stabilityKeys <- c("kind", "layer", "poly", "level", "class", "metric")
 
 ## the window the check looks at: the last `stabilityWindow` of the summary period
-.stabilityWindow <- function(sim) {
-  sp <- range(P(sim)$summaryPeriod)
-  c(sp[2L] - P(sim)$stabilityWindow * diff(sp), sp[2L])
-}
+.stabilityWindow <- function(sim) .lastFraction(P(sim)$summaryPeriod, P(sim)$stabilityWindow)
 
 ## Panels of each series over time (reps as thin lines, mean in bold), the window shaded, and the
 ## verdict in each panel title; `page` of `nPages` panels sets.
