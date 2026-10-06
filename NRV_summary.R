@@ -1859,12 +1859,12 @@ saveAnnualSeries <- function(sim) {
   registerOutputs(f, sim)
 }
 
-## The autocorrelation function of `x` (an annual series) at lags 0 to `maxLag`; NA for a constant series.
+## The autocorrelation function of `x` (an annual series) at lags 0 to `maxLag` (NA beyond the series' length); all NA for a constant series.
 .acf <- function(x, maxLag) {
   x <- x[is.finite(x)]
-  maxLag <- min(maxLag, length(x) - 1L)
-  if (maxLag < 1L || stats::sd(x) == 0) return(NA_real_)
-  as.numeric(stats::acf(x, lag.max = maxLag, plot = FALSE)$acf)
+  if (length(x) < 3L || stats::sd(x) == 0) return(rep(NA_real_, maxLag + 1L))
+  rho <- as.numeric(stats::acf(x, lag.max = min(maxLag, length(x) - 1L), plot = FALSE)$acf)
+  c(rho, rep(NA_real_, maxLag + 1L - length(rho)))
 }
 
 ## The integrated autocorrelation time of an ACF `rho` (lag 0 first): tau = -1 + 2 * the sum of the pair sums
@@ -1886,32 +1886,56 @@ saveAnnualSeries <- function(sim) {
   if (anyNA(rho) || is.na(k)) NA_integer_ else k - 1L
 }
 
-## `tables`: per-rep data.frames of the annual series (a `time` column, one column per series); `period`: the
-## NRV years c(from, to). Returns the ACF of each series for each rep and for the mean over reps ("pooled"),
-## `tau` (the autocorrelation time and first lag below 0.1 of each), `thin` (the recommended thinning interval:
-## the largest pooled tau, rounded up to whole years), `effectiveSamples` (NRV years / thin) and, for the
-## `interval` (summaryInterval), the snapshots it gives and how many of them are independent (`interval / thin`
-## of each when the interval is shorter than thin).
+## Effective number of independent samples among `n` samples with lag correlation `r` (AR(1)): n (1 - r) / (1 + r),
+## r clipped to [0, 1).
+.essAR1 <- function(n, r) {
+  r <- min(max(r, 0), 0.999)
+  n * (1 - r) / (1 + r)
+}
+
+## `tables`: per-rep data.frames of the annual series (a `time` column, one column per series); `period`: the NRV
+## years c(from, to); `interval`: `summaryInterval`. Per series:
+## - `phi`: the lag-1 autocorrelation over the NRV years, the mean of the per-rep lag-1 ACFs (clipped to [0, 0.999]),
+##   and the autocorrelation time of the AR(1) decay it fits, `tau` = (1 + phi) / (1 - phi);
+## - `ar1Misfit`: the largest absolute difference between the pooled empirical ACF at lags 1 to 50 and phi^lag
+##   (near 0 when the decay is exponential, large for e.g. oscillating series);
+## - `r`, `rMin`, `rMax`: the ACF at lag `interval`, pooled (mean over reps) and the lowest and highest rep;
+## - `effectiveSnapshots`: the snapshots `interval` apart over all reps, times (1 - r) / (1 + r);
+## - `tauGeyer`: Geyer's initial positive sequence estimate, for comparison only (noisy for short series);
+## - `lagBelow0.1`: first lag of the pooled ACF below 0.1.
+## `thin` is ceiling(max tau); `limiting` the series with that tau. `acf` holds the empirical ACF per series, rep and
+## "pooled", for lags 0 to the larger of `maxLag`, `interval` and 50, and `fitted` the phi^lag curves.
 .autocorrSummary <- function(tables, period, maxLag, interval) {
   series <- setdiff(Reduce(intersect, lapply(tables, names)), "time")
+  lagMax <- max(maxLag, interval, 50L)
   acfs <- do.call(rbind, lapply(seq_along(tables), function(i) {
     d <- tables[[i]][tables[[i]]$time >= period[1L] & tables[[i]]$time <= period[2L], , drop = FALSE]
     do.call(rbind, lapply(series, function(s) {
-      rho <- .acf(d[[s]], maxLag)
+      rho <- .acf(d[[s]], lagMax)
       data.frame(series = s, rep = as.character(i), lag = seq_along(rho) - 1L, acf = rho)
     }))
   }))
   pooled <- stats::aggregate(acf ~ series + lag, acfs, mean, na.action = stats::na.pass)
-  acfs <- rbind(acfs, data.frame(series = pooled$series, rep = "pooled", lag = pooled$lag, acf = pooled$acf))
-  keys <- unique(acfs[c("series", "rep")])
-  tau <- cbind(keys, do.call(rbind, lapply(seq_len(nrow(keys)), function(i) {
-    rho <- acfs$acf[acfs$series == keys$series[i] & acfs$rep == keys$rep[i]]
-    data.frame(tau = .autocorrTime(rho), lagBelow0.1 = .firstLagBelow(rho, 0.1))
-  })))
-  thin <- ceiling(max(tau$tau[tau$rep == "pooled"], na.rm = TRUE))
+  pooledAcf <- data.frame(series = pooled$series, rep = "pooled", lag = pooled$lag, acf = pooled$acf)
+  acfAt <- function(d, lag) d$acf[d$lag == lag]
   nSnapshots <- floor(diff(range(period)) / interval) + 1
-  list(acf = acfs, tau = tau, thin = thin, effectiveSamples = (diff(range(period)) + 1) / thin,
-       nSnapshots = nSnapshots, effectiveSnapshots = nSnapshots * min(1, interval / thin))
+  fit <- do.call(rbind, lapply(series, function(s) {
+    reps <- acfs[acfs$series == s, , drop = FALSE]
+    pool <- pooledAcf[pooledAcf$series == s, , drop = FALSE]
+    phi <- min(max(mean(vapply(split(reps, reps$rep), acfAt, numeric(1), lag = 1L)), 0), 0.999)
+    rInt <- vapply(split(reps, reps$rep), acfAt, numeric(1), lag = interval)
+    r <- acfAt(pool, interval)
+    data.frame(series = s, phi = phi, tau = (1 + phi) / (1 - phi),
+               ar1Misfit = max(abs(pool$acf[pool$lag %in% 1:50] - phi^(1:50))),
+               r = r, rMin = min(rInt), rMax = max(rInt),
+               effectiveSnapshots = .essAR1(nSnapshots * length(tables), r),
+               tauGeyer = .autocorrTime(pool$acf), lagBelow0.1 = .firstLagBelow(pool$acf, 0.1))
+  }))
+  fitted <- merge(fit[c("series", "phi")], data.frame(lag = 0:lagMax))
+  fitted$acf <- fitted$phi^fitted$lag
+  limiting <- fit$series[which.max(fit$tau)]
+  list(acf = rbind(acfs, pooledAcf), fitted = fitted, fit = fit, thin = ceiling(max(fit$tau, na.rm = TRUE)),
+       limiting = limiting, interval = interval, nSnapshots = nSnapshots * length(tables))
 }
 
 ## Full names of the annual series: `.metricLabel()`, and a species' full name for lead_<code>
@@ -1922,20 +1946,21 @@ saveAnnualSeries <- function(sim) {
   ifelse(grepl("^lead_", series), paste("Leading:", ifelse(is.na(full), code, full)), .metricLabel(series))
 }
 
-## ACF by lag for each series (reps thin, pooled mean bold) with its autocorrelation time marked
+## Empirical ACF by lag for each series (reps faint, pooled bold), the fitted phi^lag curve dashed and a vertical
+## line at the summary interval
 .autocorrPanels <- function(data, sppEquiv = NULL, sppEquivCol = "LandR") {
   a <- data$acf
   a$label <- .annualSeriesLabel(a$series, sppEquiv, sppEquivCol)
-  tau <- data$tau[data$tau$rep == "pooled", , drop = FALSE]
-  tau$label <- .annualSeriesLabel(tau$series, sppEquiv, sppEquivCol)
+  f <- data$fitted
+  f$label <- .annualSeriesLabel(f$series, sppEquiv, sppEquivCol)
   ggplot2::ggplot(a[a$rep != "pooled", ], ggplot2::aes(lag, acf)) +
-    ggplot2::geom_hline(yintercept = 0.1, linetype = "dashed", colour = "grey50") +
-    ggplot2::geom_line(ggplot2::aes(group = rep), colour = "grey60", linewidth = 0.3) +
+    ggplot2::geom_line(ggplot2::aes(group = rep), colour = "grey70", linewidth = 0.3) +
     ggplot2::geom_line(data = a[a$rep == "pooled", ], linewidth = 0.8) +
-    ggplot2::geom_vline(data = tau, ggplot2::aes(xintercept = tau), colour = "firebrick") +
+    ggplot2::geom_line(data = f, colour = "firebrick", linetype = "dashed") +
+    ggplot2::geom_vline(xintercept = data$interval, colour = "steelblue") +
     ggplot2::facet_wrap(~label) +
     ggplot2::labs(x = "lag (years)", y = "autocorrelation",
-                  caption = "thin lines: reps; bold: mean; red: autocorrelation time; dashed: 0.1") +
+                  caption = "faint: reps; bold: mean; dashed: fitted decay; blue: summaryInterval") +
     ggplot2::theme_bw(base_size = 9)
 }
 
@@ -1947,20 +1972,21 @@ autocorrSummary <- function(sim) {
   }
   res <- .autocorrSummary(lapply(files, utils::read.csv), .nrvPeriod(sim), P(sim)$autocorrMaxLag,
                           P(sim)$summaryInterval)
-  tau <- res$tau
-  tau$label <- .annualSeriesLabel(tau$series, sim$sppEquiv, P(sim)$sppEquivCol)
-  tau$recommendedThin <- res$thin
-  tau$effectiveSamples <- res$effectiveSamples
-  tau$effectiveSnapshotsAtSummaryInterval <- res$effectiveSnapshots
+  fit <- res$fit
+  fit$label <- .annualSeriesLabel(fit$series, sim$sppEquiv, P(sim)$sppEquivCol)
+  fit$recommendedThin <- res$thin
+  fit$summaryInterval <- res$interval
+  fit$nSnapshots <- res$nSnapshots
   d <- reproducible::checkPath(file.path(.ppRoot(sim), "csv", "autocorrelation"), create = TRUE)
   f_csv <- file.path(d, "autocorrelation.csv")
-  utils::write.csv(tau, f_csv, row.names = FALSE)
+  utils::write.csv(fit, f_csv, row.names = FALSE)
   sim <- registerOutputs(f_csv, sim)
 
-  message("NRV_summary autocorrelation: recommended thinning ", res$thin, " years; ",
-          signif(res$effectiveSamples, 3), " effective independent samples in the NRV years; summaryInterval ",
-          P(sim)$summaryInterval, " gives ", res$nSnapshots, " snapshots, ",
-          signif(res$effectiveSnapshots, 3), " of them independent")
+  lim <- fit[fit$series == res$limiting, ]
+  message("NRV_summary autocorrelation: snapshots ", res$interval, " years apart: correlation r = ", signif(lim$r, 2),
+          " (reps ", signif(lim$rMin, 2), "-", signif(lim$rMax, 2), "); about ", signif(lim$effectiveSnapshots, 2),
+          " effectively independent snapshots in the NRV; fitted autocorrelation time tau = ", signif(lim$tau, 3),
+          " years (series: ", lim$label, "); recommended thinning ", res$thin, " years")
 
   Plots(
     data = res, fn = .autocorrPanels, sppEquiv = sim$sppEquiv, sppEquivCol = P(sim)$sppEquivCol,

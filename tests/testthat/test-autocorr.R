@@ -20,24 +20,62 @@ test_that("the first lag with ACF below 0.1 is where it is, NA when it never is"
   expect_identical(.firstLagBelow(c(1, 0.5, 0.4)), NA_integer_)
 })
 
-test_that("the recommended thin is the largest tau over series, with the effective sample count", {
-  n <- 2000
-  tables <- lapply(1:3, function(r) data.frame(time = seq_len(n), slow = ar1(0.9, n, r), fast = ar1(0.3, n, 10 + r),
-                                               constant = 1))
-  res <- .autocorrSummary(tables, c(1, n), maxLag = 100, interval = 100)
-  pooled <- res$tau[res$tau$rep == "pooled", ]
-  expect_identical(res$thin, ceiling(max(pooled$tau, na.rm = TRUE)))
-  expect_identical(pooled$series[which.max(pooled$tau)], "slow")
-  expect_true(is.na(pooled$tau[pooled$series == "constant"]))
-  expect_equal(res$effectiveSamples, n / res$thin)
-  expect_equal(res$nSnapshots, floor((n - 1) / 100) + 1)
-  expect_setequal(unique(res$tau$rep), c("1", "2", "3", "pooled"))
+## reps x years of AR(1) (or other) series, as the summary reads them
+repTables <- function(f, reps = 5, years = 300, seed = 1) {
+  lapply(seq_len(reps), function(r) {
+    set.seed(seed * 100 + r)
+    data.frame(time = seq_len(years), x = f(years))
+  })
+}
+nrv <- c(1, 300)
+
+test_that("5 reps x 300 years of AR(1) with phi 0.95 give a fitted tau within 30% of 39 in most seeds", {
+  tau <- vapply(1:6, function(seed) {
+    .autocorrSummary(repTables(function(n) as.numeric(stats::arima.sim(list(ar = 0.95), n)), seed = seed),
+                     nrv, 200, 100)$fit$tau
+  }, numeric(1))
+  expect_gte(sum(abs(tau / 39 - 1) < 0.3), 5)
 })
 
-test_that("a summary interval shorter than thin gives fewer independent snapshots than snapshots", {
-  tables <- list(data.frame(time = 1:1000, slow = ar1(0.95, 1000)))
-  res <- .autocorrSummary(tables, c(1, 1000), maxLag = 100, interval = 5)
-  expect_lt(res$effectiveSnapshots, res$nSnapshots)
+test_that("r at the summary interval is close to phi^interval and its reps bracket it", {
+  tables <- repTables(function(n) as.numeric(stats::arima.sim(list(ar = 0.95), n)), reps = 20, years = 2000)
+  at100 <- .autocorrSummary(tables, c(1, 2000), 200, 100)$fit
+  expect_lt(abs(at100$r - 0.95^100), 0.05)
+  at20 <- .autocorrSummary(tables, c(1, 2000), 200, 20)$fit
+  expect_equal(at20$r, 0.95^20, tolerance = 0.1)
+  expect_lte(at20$rMin, at20$r)
+  expect_gte(at20$rMax, at20$r)
+})
+
+test_that("the effective snapshots follow n (1 - r) / (1 + r), with r clipped to [0, 1)", {
+  expect_equal(.essAR1(10, 0.5), 10 / 3)
+  expect_equal(.essAR1(10, -0.3), 10)
+  expect_lt(.essAR1(10, 1.2), 0.1 * 10)
+})
+
+test_that("the misfit is near 0 for AR(1) and large for an oscillating AR(2) series", {
+  ar1Fit <- .autocorrSummary(repTables(function(n) as.numeric(stats::arima.sim(list(ar = 0.9), n)), years = 2000),
+                             c(1, 2000), 100, 100)$fit
+  osc <- .autocorrSummary(repTables(function(n) as.numeric(stats::arima.sim(list(ar = c(1.4, -0.8)), n)), years = 2000),
+                          c(1, 2000), 100, 100)$fit
+  expect_lt(ar1Fit$ar1Misfit, 0.1)
+  expect_gt(osc$ar1Misfit, 0.3)
+})
+
+test_that("the recommended thin is the ceiling of the largest tau; the Geyer tau is kept; a constant series is NA", {
+  n <- 600
+  tables <- lapply(1:3, function(r) {
+    set.seed(r)
+    data.frame(time = seq_len(n), slow = ar1(0.9, n, r), fast = ar1(0.3, n, 10 + r), constant = 1)
+  })
+  res <- .autocorrSummary(tables, c(1, n), maxLag = 100, interval = 100)
+  fit <- res$fit
+  expect_identical(res$thin, ceiling(max(fit$tau, na.rm = TRUE)))
+  expect_identical(res$limiting, "slow")
+  expect_true(is.na(fit$tau[fit$series == "constant"]))
+  expect_true(all(c("phi", "tau", "ar1Misfit", "r", "rMin", "rMax", "effectiveSnapshots", "tauGeyer") %in% names(fit)))
+  expect_equal(res$nSnapshots, 3 * (floor((n - 1) / 100) + 1))
+  expect_setequal(unique(res$acf$rep), c("1", "2", "3", "pooled"))
 })
 
 test_that("the annual recorder returns one row per call, equal to the same scalars from the maps", {
