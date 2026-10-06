@@ -1319,10 +1319,13 @@ makeAnimation <- function(sim) {
   ## resolves everything; each task's data is shipped on its own as the mapped argument. (globalenv,
   ## not baseenv -- the latter trips future's "cycles in parent chains" during serialization.)
   environment(render_one) <- new.env(parent = globalenv())
-  ## the one module helper render_one uses, detached the same way
+  ## the module helpers render_one uses, detached the same way
   addCC <- .addCurrentCondition
   environment(addCC) <- list2env(list(.ccColour = .ccColour), parent = globalenv())
   assign(".addCurrentCondition", addCC, envir = environment(render_one))
+  addNrv <- .addNrvShading
+  environment(addNrv) <- new.env(parent = globalenv())
+  assign(".addNrvShading", addNrv, envir = environment(render_one))
 
   nWorkers <- .plotWorkers(sim, length(tasks))
   message("NRV_summary: rendering ", length(tasks), " figure(s) across ", nWorkers, " worker(s)")

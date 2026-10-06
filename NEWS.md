@@ -13,6 +13,7 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
   species, large patches), which pool over summary years, also use only the NRV years.
 - Envelope figures show all of `summaryPeriod` and shade the NRV years ("shaded: NRV years"). The stability
   check keeps its own `stabilityWindow`, also a fraction of `summaryPeriod`.
+- `.renderTasks()` now passes `.addNrvShading` to the detached figure renderer, as it does `.addCurrentCondition`; envelope figures failed with "could not find function" with `plotWorkers` of 1 and on workers.
 
 ## The NRV is the summary period; figures show real scales and full metric names
 
