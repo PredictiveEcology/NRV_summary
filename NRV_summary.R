@@ -37,6 +37,9 @@ defineModule(sim, list(
     "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9001)" ## dirnamesFromSet(), resolveSimYears(), padYears()
   ),
   parameters = bindrows(
+    defineParameter("autocorrMaxLag", "integer", 200L, 1L, NA,
+                    paste("longest lag (years) of the autocorrelation of the annual landscape series, which",
+                          "gives the thinning interval for the summary snapshots.")),
     defineParameter("ageClasses", "character", LandWebUtils:::.ageClasses, NA, NA,
                     "descriptions/labels for age classes (seral stages)"),
     defineParameter("ageClassCutOffs", "integer", LandWebUtils:::.ageClassCutOffs, NA, NA,
@@ -55,6 +58,11 @@ defineModule(sim, list(
     defineParameter("mode", "character", "single", NA, NA,
                     paste("use 'single' to run part of a simulation;",
                           "use 'multi' to run as part of postprocessing multiple runs.")),
+    defineParameter("recordAnnualSeries", "logical", TRUE, NA, NA,
+                    paste("(mode = 'single') record a few landscape scalars every year (proportion young and old,",
+                          "mean stand age, total biomass, proportion by leading species) in",
+                          "`annualSeries.csv`. In 'multi' mode they give the autocorrelation time of the",
+                          "landscape, hence how far apart the summary snapshots must be to be independent.")),
     defineParameter("reuseAggregates", "logical", FALSE, NA, NA,
                     paste("(mode = 'multi') if TRUE, reuse a complete per-replicate `_aggregates`",
                           "parquet dataset instead of recomputing it, re-summarizing the surviving",
@@ -216,6 +224,11 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
         sim <- scheduleEvent(sim, P(sim)$summaryPeriod[1], "NRV_summary", "save_single", .last())
         sim <- scheduleEvent(sim, end(sim), "NRV_summary", "save_single", .last())
 
+        if (isTRUE(P(sim)$recordAnnualSeries)) {
+          mod$annualSeries <- list()
+          sim <- scheduleEvent(sim, start(sim), "NRV_summary", "annual_series", .last())
+        }
+
         ## also generate + save the stand-age / veg-type maps at each timeSeriesTimes
         ## year, so the animation has its frames (read back in mode = "multi"). These
         ## typically fall outside summaryPeriod, so they are not covered by the
@@ -265,34 +278,35 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
         ## after the metric events above, whose parquet datasets and the burn blocks it reads
         sim <- scheduleEvent(sim, end(sim), "NRV_summary", "postprocess_stability", .last() + 1)
 
+        if (isTRUE(P(sim)$recordAnnualSeries)) {
+          sim <- scheduleEvent(sim, end(sim), "NRV_summary", "postprocess_autocorr", .last())
+        }
+
         sim <- scheduleEvent(sim, end(sim), "NRV_summary", "postprocess", .last())
         sim <- scheduleEvent(sim, end(sim), "NRV_summary", "plot", .last())
       }
     },
     map_generators = {
-      mod$vegTypeMap <- LandR::vegTypeMapGenerator(
-        sim$cohortData,
-        sim$pixelGroupMap,
-        P(sim)$vegLeadingProportion,
-        mixedType = P(sim)$mixedType,
-        sppEquiv = sim$sppEquiv,
-        sppEquivCol = P(sim)$sppEquivCol,
-        colors = sim$sppColorVect,
-        doAssertion = getOption("LandR.assertions", TRUE)
-      )
-
-      mod$standAgeMap <- LandR::standAgeMapGenerator(
-        sim$cohortData,
-        sim$pixelGroupMap,
-        weight = "biomass",
-        doAssertion = getOption("LandR.assertions", TRUE)
-      ) |>
-        terra::mask(sim$studyAreaReporting)
+      maps <- .landscapeMaps(sim)
+      mod$vegTypeMap <- maps$vegTypeMap
+      mod$standAgeMap <- maps$standAgeMap
 
       if (time(sim) >= P(sim)$summaryPeriod[1] && time(sim) < P(sim)$summaryPeriod[2]) {
         ## fmt: skip
         sim <- scheduleEvent(sim, time(sim) + P(sim)$summaryInterval, "NRV_summary", "map_generators", .last())
       }
+    },
+    annual_series = {
+      mod$annualSeries[[length(mod$annualSeries) + 1L]] <-
+        .annualSeriesRow(time(sim), .landscapeMaps(sim), sim$cohortData, sim$pixelGroupMap, P(sim)$ageClassCutOffs)
+      if (time(sim) < end(sim)) {
+        sim <- scheduleEvent(sim, time(sim) + 1, "NRV_summary", "annual_series", .last())
+      } else {
+        sim <- saveAnnualSeries(sim)
+      }
+    },
+    postprocess_autocorr = {
+      sim <- autocorrSummary(sim)
     },
     plot = {
       plotFun(sim)
@@ -515,6 +529,10 @@ InitMulti <- function(sim) {
     grep(paste(P(sim)$timeSeriesTimes, collapse = "|"), x = _, value = TRUE)
   mod$vtmTimeSeries <- gsub(".*standAgeMap.*", NA, mod$allouts) |>
     grep(paste(P(sim)$timeSeriesTimes, collapse = "|"), x = _, value = TRUE)
+
+  ## per-rep annual landscape series (written by the `annual_series` event, if it ran)
+  mod$annualSeriesFiles <- grep(paste0("(", paste0(mod$allReps, collapse = "|"), ")"),
+                                filesOf("annualSeries[.]csv$"), value = TRUE)
 
   ## cohortData and pixelGroupMap files
   mod$cd <- grep("cohortData", cdpgm, value = TRUE)
@@ -1473,7 +1491,10 @@ plotFun <- function(sim) {
   core_sd = "Core area SD", ed = "Edge density", enn = "Euclidean nearest-neighbour distance",
   enn_cv = "Nearest-neighbour distance CV", enn_mn = "Mean nearest-neighbour distance",
   enn_sd = "Nearest-neighbour distance SD", iji = "Interspersion-juxtaposition index",
-  sam_mdn = "Median stand age" ## patchAges(): the median stand age of each patch
+  sam_mdn = "Median stand age", ## patchAges(): the median stand age of each patch
+  ## the annual landscape series (.annualSeriesRow())
+  propYoung = "Proportion of forest young", propOld = "Proportion of forest old",
+  meanStandAge = "Mean stand age", totalBiomassTg = "Total biomass (Tg)"
 )
 
 ## the full name of each metric code; a code without a name is returned as it is
@@ -1755,6 +1776,173 @@ stabilityCheck <- function(sim) {
     data = res, fn = .stabilitySummary, minChange = P(sim)$stabilityMinChange,
     filename = "stability_summary", path = figDir,
     types = P(sim)$.plots, ggsaveArgs = list(width = 10, height = max(4, 0.25 * length(unique(res$metric))), units = "in")
+  )
+  invisible(sim)
+}
+
+## ---- annual landscape series and their autocorrelation ----------------------------------------------
+## The summary snapshots are `summaryInterval` years apart so they are nearly independent samples, as
+## thinning does for MCMC. The interval that achieves that is the autocorrelation time of the landscape,
+## which maps saved every year would measure at the cost of far too much data. A few landscape scalars
+## recorded every year measure it instead.
+
+## The vegetation-type and stand-age maps, as `map_generators` makes them (leading species by
+## `vegLeadingProportion` and `mixedType`; stand age weighted by biomass, masked to the reporting area).
+.landscapeMaps <- function(sim) {
+  list(
+    vegTypeMap = LandR::vegTypeMapGenerator(
+      sim$cohortData, sim$pixelGroupMap, P(sim)$vegLeadingProportion,
+      mixedType = P(sim)$mixedType, sppEquiv = sim$sppEquiv, sppEquivCol = P(sim)$sppEquivCol,
+      colors = sim$sppColorVect, doAssertion = getOption("LandR.assertions", TRUE)
+    ),
+    standAgeMap = LandR::standAgeMapGenerator(
+      sim$cohortData, sim$pixelGroupMap, weight = "biomass",
+      doAssertion = getOption("LandR.assertions", TRUE)
+    ) |> terra::mask(sim$studyAreaReporting)
+  )
+}
+
+## One row of landscape scalars over the forested pixels of the reporting area (those with a stand age):
+## propYoung and propOld (age below the first positive and at or above the last of the `ageClassCutOffs`,
+## i.e. the module's first and last age classes), meanStandAge, totalBiomassTg (B in g/m2 times the pixel
+## area), and lead_<species>, the proportion of those pixels led by each species ("Mixed" included).
+.annualSeriesRow <- function(time, maps, cohortData, pixelGroupMap, ageClassCutOffs) {
+  age <- terra::values(maps$standAgeMap, mat = FALSE)
+  forest <- !is.na(age)
+  age <- age[forest]
+  vt <- terra::values(maps$vegTypeMap, mat = FALSE)[forest]
+  lv <- terra::levels(maps$vegTypeMap)[[1L]]
+  lead <- stats::setNames(tabulate(match(vt, lv[[1L]]), nbins = nrow(lv)) / length(age), lv[[2L]])
+  nPerGroup <- tabulate(terra::values(pixelGroupMap, mat = FALSE)[forest])
+  nPerCohort <- nPerGroup[cohortData$pixelGroup]
+  cuts <- ageClassCutOffs[ageClassCutOffs > min(ageClassCutOffs)]
+  data.frame(
+    time = time, propYoung = mean(age < min(cuts)), propOld = mean(age >= max(cuts)), meanStandAge = mean(age),
+    totalBiomassTg = sum(as.numeric(cohortData$B) * nPerCohort, na.rm = TRUE) * 0.01 * prod(terra::res(pixelGroupMap)) / 1e4 / 1e6,
+    as.list(stats::setNames(lead, paste0("lead_", names(lead))))
+  )
+}
+
+## all years' rows in one table: a species leading in only some years is 0 in the others
+.bindAnnualRows <- function(rows) {
+  d <- data.table::rbindlist(rows, fill = TRUE)
+  for (l in grep("^lead_", names(d), value = TRUE)) data.table::set(d, which(is.na(d[[l]])), l, 0)
+  as.data.frame(d)
+}
+
+saveAnnualSeries <- function(sim) {
+  f <- file.path(outputPath(sim), "annualSeries.csv")
+  utils::write.csv(.bindAnnualRows(mod$annualSeries), f, row.names = FALSE)
+  registerOutputs(f, sim)
+}
+
+## The autocorrelation function of `x` (an annual series) at lags 0 to `maxLag`; NA for a constant series.
+.acf <- function(x, maxLag) {
+  x <- x[is.finite(x)]
+  maxLag <- min(maxLag, length(x) - 1L)
+  if (maxLag < 1L || stats::sd(x) == 0) return(NA_real_)
+  as.numeric(stats::acf(x, lag.max = maxLag, plot = FALSE)$acf)
+}
+
+## The integrated autocorrelation time of an ACF `rho` (lag 0 first): tau = -1 + 2 * the sum of the pair sums
+## rho[2k] + rho[2k + 1] (Geyer's initial positive sequence: the sum stops before the first non-positive pair
+## sum, and the pair sums are made non-increasing). White noise gives 1, an AR(1) series with coefficient
+## phi gives (1 + phi) / (1 - phi).
+.autocorrTime <- function(rho) {
+  if (anyNA(rho)) return(NA_real_)
+  if (length(rho) %% 2L) rho <- c(rho, 0)
+  pairs <- cummin(rho[c(TRUE, FALSE)] + rho[c(FALSE, TRUE)])
+  n <- which(pairs <= 0)[1L] - 1L
+  if (is.na(n)) n <- length(pairs)
+  max(1, -1 + 2 * sum(pairs[seq_len(n)]))
+}
+
+## The first lag at which the ACF is below `level`; NA if it never is.
+.firstLagBelow <- function(rho, level = 0.1) {
+  k <- which(rho < level)[1L]
+  if (anyNA(rho) || is.na(k)) NA_integer_ else k - 1L
+}
+
+## `tables`: per-rep data.frames of the annual series (a `time` column, one column per series); `period`: the
+## NRV years c(from, to). Returns the ACF of each series for each rep and for the mean over reps ("pooled"),
+## `tau` (the autocorrelation time and first lag below 0.1 of each), `thin` (the recommended thinning interval:
+## the largest pooled tau, rounded up to whole years), `effectiveSamples` (NRV years / thin) and, for the
+## `interval` (summaryInterval), the snapshots it gives and how many of them are independent (`interval / thin`
+## of each when the interval is shorter than thin).
+.autocorrSummary <- function(tables, period, maxLag, interval) {
+  series <- setdiff(Reduce(intersect, lapply(tables, names)), "time")
+  acfs <- do.call(rbind, lapply(seq_along(tables), function(i) {
+    d <- tables[[i]][tables[[i]]$time >= period[1L] & tables[[i]]$time <= period[2L], , drop = FALSE]
+    do.call(rbind, lapply(series, function(s) {
+      rho <- .acf(d[[s]], maxLag)
+      data.frame(series = s, rep = as.character(i), lag = seq_along(rho) - 1L, acf = rho)
+    }))
+  }))
+  pooled <- stats::aggregate(acf ~ series + lag, acfs, mean, na.action = stats::na.pass)
+  acfs <- rbind(acfs, data.frame(series = pooled$series, rep = "pooled", lag = pooled$lag, acf = pooled$acf))
+  keys <- unique(acfs[c("series", "rep")])
+  tau <- cbind(keys, do.call(rbind, lapply(seq_len(nrow(keys)), function(i) {
+    rho <- acfs$acf[acfs$series == keys$series[i] & acfs$rep == keys$rep[i]]
+    data.frame(tau = .autocorrTime(rho), lagBelow0.1 = .firstLagBelow(rho, 0.1))
+  })))
+  thin <- ceiling(max(tau$tau[tau$rep == "pooled"], na.rm = TRUE))
+  nSnapshots <- floor(diff(range(period)) / interval) + 1
+  list(acf = acfs, tau = tau, thin = thin, effectiveSamples = (diff(range(period)) + 1) / thin,
+       nSnapshots = nSnapshots, effectiveSnapshots = nSnapshots * min(1, interval / thin))
+}
+
+## Full names of the annual series: `.metricLabel()`, and a species' full name for lead_<code>
+.annualSeriesLabel <- function(series, sppEquiv = NULL, sppEquivCol = "LandR") {
+  code <- sub("^lead_", "", series)
+  full <- rep(NA_character_, length(code))
+  if (!is.null(sppEquiv)) full <- sppEquiv[["EN_generic_full"]][match(code, sppEquiv[[sppEquivCol]])]
+  ifelse(grepl("^lead_", series), paste("Leading:", ifelse(is.na(full), code, full)), .metricLabel(series))
+}
+
+## ACF by lag for each series (reps thin, pooled mean bold) with its autocorrelation time marked
+.autocorrPanels <- function(data, sppEquiv = NULL, sppEquivCol = "LandR") {
+  a <- data$acf
+  a$label <- .annualSeriesLabel(a$series, sppEquiv, sppEquivCol)
+  tau <- data$tau[data$tau$rep == "pooled", , drop = FALSE]
+  tau$label <- .annualSeriesLabel(tau$series, sppEquiv, sppEquivCol)
+  ggplot2::ggplot(a[a$rep != "pooled", ], ggplot2::aes(lag, acf)) +
+    ggplot2::geom_hline(yintercept = 0.1, linetype = "dashed", colour = "grey50") +
+    ggplot2::geom_line(ggplot2::aes(group = rep), colour = "grey60", linewidth = 0.3) +
+    ggplot2::geom_line(data = a[a$rep == "pooled", ], linewidth = 0.8) +
+    ggplot2::geom_vline(data = tau, ggplot2::aes(xintercept = tau), colour = "firebrick") +
+    ggplot2::facet_wrap(~label) +
+    ggplot2::labs(x = "lag (years)", y = "autocorrelation",
+                  caption = "thin lines: reps; bold: mean; red: autocorrelation time; dashed: 0.1") +
+    ggplot2::theme_bw(base_size = 9)
+}
+
+autocorrSummary <- function(sim) {
+  files <- mod$annualSeriesFiles
+  if (!length(files)) {
+    message("NRV_summary autocorrelation: no annualSeries.csv found; run with recordAnnualSeries = TRUE")
+    return(invisible(sim))
+  }
+  res <- .autocorrSummary(lapply(files, utils::read.csv), .nrvPeriod(sim), P(sim)$autocorrMaxLag,
+                          P(sim)$summaryInterval)
+  tau <- res$tau
+  tau$label <- .annualSeriesLabel(tau$series, sim$sppEquiv, P(sim)$sppEquivCol)
+  tau$recommendedThin <- res$thin
+  tau$effectiveSamples <- res$effectiveSamples
+  tau$effectiveSnapshotsAtSummaryInterval <- res$effectiveSnapshots
+  d <- reproducible::checkPath(file.path(.ppRoot(sim), "csv", "autocorrelation"), create = TRUE)
+  f_csv <- file.path(d, "autocorrelation.csv")
+  utils::write.csv(tau, f_csv, row.names = FALSE)
+  sim <- registerOutputs(f_csv, sim)
+
+  message("NRV_summary autocorrelation: recommended thinning ", res$thin, " years; ",
+          signif(res$effectiveSamples, 3), " effective independent samples in the NRV years; summaryInterval ",
+          P(sim)$summaryInterval, " gives ", res$nSnapshots, " snapshots, ",
+          signif(res$effectiveSnapshots, 3), " of them independent")
+
+  Plots(
+    data = res, fn = .autocorrPanels, sppEquiv = sim$sppEquiv, sppEquivCol = P(sim)$sppEquivCol,
+    filename = "autocorrelation", path = .ppFigDir(sim, "autocorrelation", "all"),
+    types = P(sim)$.plots, ggsaveArgs = list(width = 12, height = 8, units = "in")
   )
   invisible(sim)
 }

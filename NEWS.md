@@ -2,6 +2,17 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## Autocorrelation time sets the thinning of the snapshots
+
+- New annual event (`recordAnnualSeries = TRUE`, the default; mode 'single') writes `annualSeries.csv` per rep: the
+  proportion of forest young and old, mean stand age, total biomass and the proportion led by each species, one
+  row per year, no rasters.
+- In mode 'multi' the new `postprocess_autocorr` event computes the ACF of each series over the NRV years (up to
+  `autocorrMaxLag`, default 200 years), the integrated autocorrelation time tau (Geyer's initial positive sequence)
+  and the first lag with ACF below 0.1, per rep and pooled. The recommended thinning interval is the largest pooled
+  tau; the message also gives the effective number of independent samples at `summaryInterval`. Written to
+  `csv/autocorrelation/autocorrelation.csv` and `figures/autocorrelation/`.
+
 ## `nrvWindow`: the NRV is the last part of the summary period
 
 - `summaryPeriod` now defaults to the whole run, `c(start(sim), end(sim))` (it was `start + c(700, 1000)`),
