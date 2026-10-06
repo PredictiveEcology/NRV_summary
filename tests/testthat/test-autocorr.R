@@ -40,25 +40,35 @@ test_that("a summary interval shorter than thin gives fewer independent snapshot
   expect_lt(res$effectiveSnapshots, res$nSnapshots)
 })
 
-test_that("the annual recorder returns one row with the expected columns", {
-  ## 4 x 4 pixels, 3 pixel groups; pixel group 3 is outside the reporting area (no stand age)
+test_that("the annual recorder returns one row per call, equal to the same scalars from the maps", {
+  ## 4 x 4 pixels of 100 m; pixel group 3 has no cohorts (not forest)
   pgm <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 400, ymin = 0, ymax = 400, vals = rep(c(1, 2, 3, 1), 4))
-  cd <- data.table::data.table(pixelGroup = c(1L, 1L, 2L, 3L), speciesCode = c("Pice_mar", "Betu_pap", "Betu_pap", "Pice_mar"),
-                               age = c(30L, 60L, 150L, 10L), B = c(1000L, 500L, 2000L, 100L))
-  sam <- terra::rast(pgm); terra::values(sam) <- rep(c(30, 150, NA, 30), 4)
-  vtm <- terra::rast(pgm); terra::values(vtm) <- rep(c(1, 2, 1, 1), 4)
-  levels(vtm) <- data.frame(ID = 1:2, species = c("Pice_mar", "Betu_pap"))
-  rows <- lapply(c(5, 6), function(t) .annualSeriesRow(t, list(vegTypeMap = vtm, standAgeMap = sam), cd, pgm,
-                                                        c(0L, 40L, 80L, 120L)))
-  one <- rows[[1]]
-  expect_identical(nrow(one), 1L)
-  expect_identical(names(one), c("time", "propYoung", "propOld", "meanStandAge", "totalBiomassTg",
-                                 "lead_Pice_mar", "lead_Betu_pap"))
-  ## 12 forested pixels: 8 aged 30 (young, < 40) and 4 aged 150 (old, >= 120); led by Pice_mar on 8, Betu_pap on 4;
-  ## pixel group 1 covers 8 of them (1500 g/m2) and group 2 covers 4 (2000 g/m2), 1 ha each
-  expect_equal(unlist(one[1, -1]), c(propYoung = 2/3, propOld = 1/3, meanStandAge = 70, totalBiomassTg = 2e-4,
-                                      lead_Pice_mar = 2/3, lead_Betu_pap = 1/3))
+  names(pgm) <- "pixelGroup"
+  cd <- data.table::data.table(pixelGroup = c(1L, 1L, 2L, 2L), speciesCode = c("Pice_mar", "Betu_pap", "Betu_pap", "Pice_mar"),
+                               age = c(30L, 60L, 150L, 160L), B = c(1000L, 500L, 2000L, 100L))
+  sppEquiv <- data.table::data.table(LandR = c("Pice_mar", "Betu_pap"), Type = c("Conifer", "Deciduous"),
+                                     EN_generic_full = c("Black spruce", "Paper birch"))
+  cuts <- c(0L, 40L, 80L, 120L)
+  row <- function(t) .annualSeriesRow(t, cd, tabulate(terra::values(pgm, mat = FALSE)), 1, cuts, 0.8, 2L, sppEquiv, "LandR")
+  rows <- lapply(c(5, 6), row)
+  expect_identical(nrow(rows[[1]]), 1L)
+  expect_identical(rows[[1]]$time, 5)
   expect_identical(nrow(.bindAnnualRows(rows)), 2L)
+
+  ## the same scalars from the maps map_generators makes
+  sam <- LandR::standAgeMapGenerator(cd, pgm, weight = "biomass", doAssertion = FALSE)
+  vtm <- LandR::vegTypeMapGenerator(cd, pgm, 0.8, mixedType = 2L, sppEquiv = sppEquiv, sppEquivCol = "LandR",
+                                    colors = c(Pice_mar = "black", Betu_pap = "white", Mixed = "grey"), doAssertion = FALSE)
+  age <- terra::values(sam, mat = FALSE)
+  forest <- !is.na(age)
+  lv <- terra::levels(vtm)[[1L]]
+  lead <- tabulate(match(terra::values(vtm, mat = FALSE)[forest], lv[[1L]]), nbins = nrow(lv)) / sum(forest)
+  expected <- c(propYoung = mean(age[forest] < 40), propOld = mean(age[forest] >= 120), meanStandAge = mean(age[forest]),
+                setNames(lead, paste0("lead_", lv[[2L]])))
+  got <- unlist(rows[[1]][setdiff(names(expected), "totalBiomassTg")])
+  expect_equal(got[order(names(got))], expected[order(names(expected))])
+  ## biomass: 8 pixels of group 1 (1500 g/m2) and 4 of group 2 (2100 g/m2), 1 ha each
+  expect_equal(rows[[1]]$totalBiomassTg, (8 * 1500 + 4 * 2100) * 0.01 / 1e6)
 })
 
 test_that("series have full names, a species by its full name, one label per series", {

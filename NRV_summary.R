@@ -297,8 +297,14 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
       }
     },
     annual_series = {
+      if (is.null(mod$reportingCells)) {
+        mod$reportingCells <- .reportingCells(sim$pixelGroupMap, sim$studyAreaReporting)
+      }
+      nPerGroup <- tabulate(terra::values(sim$pixelGroupMap, mat = FALSE)[mod$reportingCells])
       mod$annualSeries[[length(mod$annualSeries) + 1L]] <-
-        .annualSeriesRow(time(sim), .landscapeMaps(sim), sim$cohortData, sim$pixelGroupMap, P(sim)$ageClassCutOffs)
+        .annualSeriesRow(time(sim), sim$cohortData, nPerGroup, prod(terra::res(sim$pixelGroupMap)) / 1e4,
+                         P(sim)$ageClassCutOffs, P(sim)$vegLeadingProportion, P(sim)$mixedType,
+                         sim$sppEquiv, P(sim)$sppEquivCol)
       if (time(sim) < end(sim)) {
         sim <- scheduleEvent(sim, time(sim) + 1, "NRV_summary", "annual_series", .last())
       } else {
@@ -1802,24 +1808,41 @@ stabilityCheck <- function(sim) {
   )
 }
 
-## One row of landscape scalars over the forested pixels of the reporting area (those with a stand age):
-## propYoung and propOld (age below the first positive and at or above the last of the `ageClassCutOffs`,
-## i.e. the module's first and last age classes), meanStandAge, totalBiomassTg (B in g/m2 times the pixel
-## area), and lead_<species>, the proportion of those pixels led by each species ("Mixed" included).
-.annualSeriesRow <- function(time, maps, cohortData, pixelGroupMap, ageClassCutOffs) {
-  age <- terra::values(maps$standAgeMap, mat = FALSE)
-  forest <- !is.na(age)
-  age <- age[forest]
-  vt <- terra::values(maps$vegTypeMap, mat = FALSE)[forest]
-  lv <- terra::levels(maps$vegTypeMap)[[1L]]
-  lead <- stats::setNames(tabulate(match(vt, lv[[1L]]), nbins = nrow(lv)) / length(age), lv[[2L]])
-  nPerGroup <- tabulate(terra::values(pixelGroupMap, mat = FALSE)[forest])
-  nPerCohort <- nPerGroup[cohortData$pixelGroup]
+## The pixels of the reporting area, once: the annual row counts pixel groups within them every year.
+.reportingCells <- function(pixelGroupMap, studyAreaReporting) {
+  !is.na(terra::values(terra::mask(terra::rast(pixelGroupMap, vals = 1), studyAreaReporting), mat = FALSE))
+}
+
+## One row of landscape scalars from `cohortData` and `nPerGroup`, the number of reporting-area pixels in each
+## pixel group (`tabulate()` of the pixelGroupMap values; no rasters are made). The forested pixels are those of
+## the pixel groups in `cohortData`. Same definitions as the maps of `.landscapeMaps()`: leading species from
+## `LandR::vegTypeGenerator()` (the data.table path of `vegTypeMapGenerator()`), stand age biomass-weighted
+## and floored to 10 years as `standAgeMapGenerator()` does. propYoung and propOld: stand age below the first
+## positive and at or above the last of the `ageClassCutOffs` (the module's first and last age classes);
+## totalBiomassTg: B (g/m2) times pixels times `pixelHa`; lead_<species>: proportion of the forested pixels
+## led by each species ("Mixed" included).
+.annualSeriesRow <- function(time, cohortData, nPerGroup, pixelHa, ageClassCutOffs,
+                             vegLeadingProportion, mixedType, sppEquiv, sppEquivCol) {
+  weightN <- function(pg) {
+    n <- nPerGroup[pg]
+    n[is.na(n)] <- 0
+    n
+  }
+  w <- rowsum(cbind(ageB = cohortData$age * cohortData$B, B = cohortData$B), cohortData$pixelGroup)
+  age <- data.frame(pixelGroup = as.integer(rownames(w)), age = floor(w[, "ageB"] / w[, "B"] / 10) * 10)
+  lead <- LandR::vegTypeGenerator(cohortData, vegLeadingProportion, mixedType = mixedType, sppEquiv = sppEquiv,
+                                  sppEquivCol = sppEquivCol, doAssertion = FALSE)
+  lead <- lead[!duplicated(lead$pixelGroup), ]
+  nAge <- weightN(age$pixelGroup)
+  nLead <- weightN(lead$pixelGroup)
+  nForest <- sum(nAge)
+  byLead <- tapply(nLead, as.character(lead$leading), sum) / sum(nLead)
   cuts <- ageClassCutOffs[ageClassCutOffs > min(ageClassCutOffs)]
   data.frame(
-    time = time, propYoung = mean(age < min(cuts)), propOld = mean(age >= max(cuts)), meanStandAge = mean(age),
-    totalBiomassTg = sum(as.numeric(cohortData$B) * nPerCohort, na.rm = TRUE) * 0.01 * prod(terra::res(pixelGroupMap)) / 1e4 / 1e6,
-    as.list(stats::setNames(lead, paste0("lead_", names(lead))))
+    time = time, propYoung = sum(nAge[age$age < min(cuts)]) / nForest, propOld = sum(nAge[age$age >= max(cuts)]) / nForest,
+    meanStandAge = sum(age$age * nAge) / nForest,
+    totalBiomassTg = sum(as.numeric(cohortData$B) * weightN(cohortData$pixelGroup)) * 0.01 * pixelHa / 1e6,
+    as.list(stats::setNames(as.numeric(byLead), paste0("lead_", names(byLead))))
   )
 }
 
