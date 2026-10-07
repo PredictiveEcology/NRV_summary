@@ -176,6 +176,12 @@ defineModule(sim, list(
 #   - type `init` is required for initialization
 
 doEvent.NRV_summary = function(sim, eventTime, eventType) {
+  ## The vegetation objects come from other modules, whose init may run after this one: check them at
+  ## the first event that uses them (all scheduled .last()), not in init.
+  if (eventType %in% c("map_generators", "save_single", "annual_series") && !isTRUE(mod$inputsChecked)) {
+    .checkSingleInputs(sim)
+    mod$inputsChecked <- TRUE
+  }
   switch(
     eventType,
     init = {
@@ -206,15 +212,6 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
       mod$analysesOutputsTimes <- analysesOutputsTimes(P(sim)$summaryPeriod, P(sim)$summaryInterval)
 
       if (P(sim)$mode == "single") {
-        stopifnot(
-          !is.null(sim$cohortData),
-          !is.null(sim$pixelGroupMap),
-          !is.null(sim$speciesLayers),
-          !is.null(sim$sppColorVect),
-          !is.null(sim$sppEquiv),
-          !is.null(sim$studyAreaReporting)
-        )
-
         sim <- scheduleEvent(sim, start(sim), "NRV_summary", "map_generators", .last())
         ## fmt: skip
         sim <- scheduleEvent(sim, P(sim)$summaryPeriod[1], "NRV_summary", "map_generators", .last())
@@ -1797,6 +1794,16 @@ stabilityCheck <- function(sim) {
 
 ## The vegetation-type and stand-age maps, as `map_generators` makes them (leading species by
 ## `vegLeadingProportion` and `mixedType`; stand age weighted by biomass, masked to the reporting area).
+.checkSingleInputs <- function(sim) {
+  needed <- c("cohortData", "pixelGroupMap", "speciesLayers", "sppColorVect", "sppEquiv", "studyAreaReporting")
+  missing <- needed[vapply(needed, function(nm) is.null(sim[[nm]]), logical(1))]
+  if (length(missing)) {
+    stop("NRV_summary (mode = 'single') needs ", paste(missing, collapse = ", "),
+         " in the simList by the first summary event, but not found; they come from the vegetation modules (e.g. Biomass_core).")
+  }
+  invisible(TRUE)
+}
+
 .landscapeMaps <- function(sim) {
   list(
     vegTypeMap = LandR::vegTypeMapGenerator(

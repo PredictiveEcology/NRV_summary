@@ -2,6 +2,12 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## Input checks at first use
+
+- Mode 'single' no longer fails in init when `cohortData`, `pixelGroupMap` etc. are not yet made by the vegetation
+  modules' init (cold cache); the objects are checked at the first `map_generators`, `save_single` or `annual_series`
+  event, with an error naming the missing ones.
+
 ## Autocorrelation time sets the thinning of the snapshots
 
 - New annual event (`recordAnnualSeries = TRUE`, the default; mode 'single') writes `annualSeries.csv` per rep: the

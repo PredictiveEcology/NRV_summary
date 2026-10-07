@@ -84,3 +84,26 @@ test_that("multi mode reads the reps' annual series and writes the autocorrelati
   expect_gt(d$recommendedThin[1], 5)
   expect_length(list.files(root, "autocorrelation.png", recursive = TRUE), 1L)
 })
+
+test_that("single mode checks its vegetation inputs at the first summary event, not in init", {
+  ## an earlier module's init has not made cohortData yet; a later one does before the first event
+  objs <- stubObjects(); late <- objs$cohortData; objs$cohortData <- NULL
+  root <- withr::local_tempdir()
+  sim <- SpaDES.core::simInit(
+    times = list(start = 0, end = 2),
+    params = list(NRV_summary = list(mode = "single", summaryInterval = 2L, recordAnnualSeries = FALSE, .plots = NA)),
+    modules = moduleName, objects = objs, paths = simPaths(root)
+  )
+  sim <- suppressWarnings(SpaDES.core::spades(sim, events = list(NRV_summary = "init"), debug = FALSE))
+  expect_null(sim$cohortData)
+  sim$cohortData <- late
+  expect_no_error(suppressWarnings(SpaDES.core::spades(sim, debug = FALSE)))
+  ## still missing at the first event: error names the object
+  root2 <- withr::local_tempdir()
+  sim2 <- SpaDES.core::simInit(
+    times = list(start = 0, end = 2),
+    params = list(NRV_summary = list(mode = "single", summaryInterval = 2L, recordAnnualSeries = FALSE, .plots = NA)),
+    modules = moduleName, objects = objs, paths = simPaths(root2)
+  )
+  expect_error(suppressWarnings(SpaDES.core::spades(sim2, debug = FALSE)), "cohortData")
+})
