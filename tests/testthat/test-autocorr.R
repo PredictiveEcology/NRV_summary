@@ -109,6 +109,35 @@ test_that("the annual recorder returns one row per call, equal to the same scala
   expect_equal(rows[[1]]$totalBiomassTg, (8 * 1500 + 4 * 2100) * 0.01 / 1e6)
 })
 
+test_that("the annual row is the same as with a join of the leading species onto every cohort", {
+  ## pixelGroups 1 and 2 have two deciduous species (summed for the mixedwood decision), 3 is pure conifer,
+  ## 4 has a tie between two conifers
+  cd <- data.table::data.table(
+    pixelGroup = c(1L, 1L, 1L, 2L, 2L, 2L, 3L, 4L, 4L),
+    speciesCode = factor(c("Pice_mar", "Betu_pap", "Popu_tre", "Pice_mar", "Betu_pap", "Popu_tre", "Pice_mar",
+                           "Pinu_ban", "Pice_mar")),
+    age = c(30L, 60L, 90L, 50L, 150L, 160L, 70L, 20L, 80L),
+    B = c(2500L, 1500L, 1000L, 7000L, 2000L, 1000L, 800L, 500L, 500L)
+  )
+  sppEquiv <- data.table::data.table(LandR = c("Pice_mar", "Betu_pap", "Popu_tre", "Pinu_ban"),
+                                     Type = c("Conifer", "Deciduous", "Deciduous", "Conifer"))
+  pgm <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 400, ymin = 0, ymax = 400, vals = rep(c(1, 2, 3, 4), 4))
+  nPerGroup <- tabulate(terra::values(pgm, mat = FALSE))
+  cuts <- c(0L, 40L, 80L, 120L)
+  got <- .annualSeriesRow(7, cd, nPerGroup, 1, cuts, 0.75, 2L, sppEquiv, "LandR")
+
+  ## the row as it was made: vegTypeGenerator() joins `leading` onto every cohort row, one row per group kept
+  lead <- LandR::vegTypeGenerator(cd, 0.75, mixedType = 2L, sppEquiv = sppEquiv, sppEquivCol = "LandR",
+                                  doAssertion = FALSE)
+  lead <- lead[!duplicated(lead$pixelGroup), ]
+  expect_identical(sort(as.character(lead$leading[order(lead$pixelGroup)])),
+                   sort(c("Mixed", "Mixed", "Pice_mar", "Pice_mar")))  ## (the case is not trivial)
+  byLead <- tapply(nPerGroup[lead$pixelGroup], as.character(lead$leading), sum) / sum(nPerGroup[lead$pixelGroup])
+  expect_identical(unlist(got[paste0("lead_", names(byLead))], use.names = FALSE), as.numeric(byLead))
+  expect_setequal(grep("^lead_", names(got), value = TRUE), paste0("lead_", names(byLead)))
+  expect_identical(.annualSeriesRow(7, cd, nPerGroup, 1, cuts, 0.75, 2L, sppEquiv, "LandR"), got)
+})
+
 test_that("series have full names, a species by its full name, one label per series", {
   sppEquiv <- data.frame(LandR = c("Pice_mar", "Betu_pap"), EN_generic_full = c("Black spruce", "Paper birch"))
   series <- c("propYoung", "lead_Pice_mar", "lead_Betu_pap", "lead_Mixed", "meanStandAge")

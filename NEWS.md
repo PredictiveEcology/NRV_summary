@@ -2,6 +2,12 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+## Faster annual row
+
+- The annual event takes the leading species per pixelGroup from `LandR::leadingByPixelGroup()` instead of
+  `LandR::vegTypeGenerator()` plus a join onto every cohort row and `!duplicated()`; the row is identical.
+  Needs the LandR with `leadingByPixelGroup()`.
+
 ## Autocorrelation time sets the thinning of the snapshots
 
 - New annual event (`recordAnnualSeries = TRUE`, the default; mode 'single') writes `annualSeries.csv` per rep: the
