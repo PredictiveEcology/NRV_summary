@@ -2,6 +2,10 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- Single mode registers each saved data file (cohortData, pixelGroupMap, standAgeMap, vegTypeMap, sppEquiv, sppColorVect,
+  speciesLayers, flammableMap) with the name of the object it holds and the function that saved it. `outputs(sim)` had
+  `NA` for the object name of all of them, so a replay could not load the archived files back as inputs.
+
 - The `lm` and `pm` time-series figures (`<poly> <metric>_ribbon.png` and the per-metric `<metric>_ribbon_p<n>.png` pages)
   draw each replicate as its own thin grey line with the median over the replicates bold, as the stand-level figures
   do, instead of a min--max band and mean line. File names are unchanged; the current condition and the shaded NRV

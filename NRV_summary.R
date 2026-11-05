@@ -403,63 +403,7 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
       sim <- makeAnimation(sim)
     },
     save_single = {
-      padYear <- paddedFloatToChar(time(sim), padL = ceiling(log10(end(sim) + 1)))
-
-      ## objects to save at start of simulation ---------------------------------------------------
-      if (time(sim) == start(sim)) {
-        f_sppColorVect <- file.path(outputPath(sim), paste0("sppColorVect_year", padYear, ".qs2"))
-        qs2::qs_save(sim$sppColorVect, f_sppColorVect)
-        sim <- registerOutputs(f_sppColorVect, sim)
-
-        f_sppEquiv <- file.path(outputPath(sim), paste0("sppEquiv_year", padYear, ".qs2"))
-        qs2::qs_save(sim$sppEquiv, f_sppEquiv)
-        sim <- registerOutputs(f_sppEquiv, sim)
-
-        f_speciesLayers <- file.path(outputPath(sim), paste0("speciesLayers_year", padYear, ".tif"))
-        terra::writeRaster(sim$speciesLayers, f_speciesLayers, datatype = "INT2U", overwrite = TRUE)
-        sim <- registerOutputs(f_speciesLayers, sim)
-      }
-
-      ## objects to save during simulation --------------------------------------------------------
-      ## stand-age + veg-type maps are saved at the summary times AND at each
-      ## timeSeriesTimes year (the animation frames, read back in mode = "multi").
-      ## cohortData + pixelGroupMap are only needed at the summary analysis times,
-      ## so they are NOT written at the (many) timeSeriesTimes years.
-      times_during <- c(start(sim), end(sim), mod$analysesOutputsTimes) |> unique() |> sort()
-      times_maps <- c(times_during, P(sim)$timeSeriesTimes) |> unique() |> sort()
-
-      if (time(sim) %in% times_maps) {
-        f_standAgeMap <- file.path(outputPath(sim), paste0("standAgeMap_year", padYear, ".tif"))
-        terra::writeRaster(mod$standAgeMap, f_standAgeMap, datatype = "INT2U", overwrite = TRUE)
-        sim <- registerOutputs(f_standAgeMap, sim)
-
-        f_vegTypeMap <- file.path(outputPath(sim), paste0("vegTypeMap_year", padYear, ".tif"))
-        terra::writeRaster(mod$vegTypeMap, f_vegTypeMap, datatype = "INT2U", overwrite = TRUE)
-        sim <- registerOutputs(f_vegTypeMap, sim)
-      }
-
-      if (time(sim) %in% times_during) {
-        f_cohortData <- file.path(outputPath(sim), paste0("cohortData_year", padYear, ".qs2"))
-        qs2::qs_save(sim$cohortData, f_cohortData)
-        sim <- registerOutputs(f_cohortData, sim)
-
-        f_pixelGroupMap <- file.path(outputPath(sim), paste0("pixelGroupMap_year", padYear, ".tif"))
-        terra::writeRaster(sim$pixelGroupMap, f_pixelGroupMap, datatype = "INT4U", overwrite = TRUE)
-        sim <- registerOutputs(f_pixelGroupMap, sim)
-
-        nextTime <- time(sim) + P(sim)$summaryInterval
-        ## times scheduled by init are not scheduled a second time here
-        if (time(sim) >= P(sim)$summaryPeriod[1] && time(sim) < P(sim)$summaryPeriod[2] && !nextTime %in% mod$initTimes) {
-          sim <- scheduleEvent(sim, nextTime, "NRV_summary", "save_single", .last())
-        }
-      }
-
-      ## objects to save at end of simulation -----------------------------------------------------
-      if (time(sim) == end(sim)) {
-        f_flammableMap <- file.path(outputPath(sim), paste0("flammableMap_year", padYear, ".tif"))
-        terra::writeRaster(sim$flammableMap, f_flammableMap, datatype = "INT2U", overwrite = TRUE)
-        sim <- registerOutputs(f_flammableMap, sim)
-      }
+      sim <- .saveSingle(sim)
     },
     noEventWarning(sim)
   )
@@ -2933,6 +2877,69 @@ standMetrics <- function(sim) {
   d <- data.table::rbindlist(rows, fill = TRUE)
   for (l in grep("^lead_", names(d), value = TRUE)) data.table::set(d, which(is.na(d[[l]])), l, 0)
   as.data.frame(d)
+}
+
+## The files a single-mode run saves at this time (see the save_single event), each registered with
+## the name of the object it holds so a replay can load it back as that input.
+.saveSingle <- function(sim) {
+  padYear <- paddedFloatToChar(time(sim), padL = ceiling(log10(end(sim) + 1)))
+
+  ## objects to save at start of simulation ---------------------------------------------------
+  if (time(sim) == start(sim)) {
+    f_sppColorVect <- file.path(outputPath(sim), paste0("sppColorVect_year", padYear, ".qs2"))
+    qs2::qs_save(sim$sppColorVect, f_sppColorVect)
+    sim <- registerOutputs(f_sppColorVect, sim, objectName = "sppColorVect", fun = "qs2::qs_save")
+
+    f_sppEquiv <- file.path(outputPath(sim), paste0("sppEquiv_year", padYear, ".qs2"))
+    qs2::qs_save(sim$sppEquiv, f_sppEquiv)
+    sim <- registerOutputs(f_sppEquiv, sim, objectName = "sppEquiv", fun = "qs2::qs_save")
+
+    f_speciesLayers <- file.path(outputPath(sim), paste0("speciesLayers_year", padYear, ".tif"))
+    terra::writeRaster(sim$speciesLayers, f_speciesLayers, datatype = "INT2U", overwrite = TRUE)
+    sim <- registerOutputs(f_speciesLayers, sim, objectName = "speciesLayers", fun = "terra::writeRaster")
+  }
+
+  ## objects to save during simulation --------------------------------------------------------
+  ## stand-age + veg-type maps are saved at the summary times AND at each
+  ## timeSeriesTimes year (the animation frames, read back in mode = "multi").
+  ## cohortData + pixelGroupMap are only needed at the summary analysis times,
+  ## so they are NOT written at the (many) timeSeriesTimes years.
+  times_during <- c(start(sim), end(sim), mod$analysesOutputsTimes) |> unique() |> sort()
+  times_maps <- c(times_during, P(sim)$timeSeriesTimes) |> unique() |> sort()
+
+  if (time(sim) %in% times_maps) {
+    f_standAgeMap <- file.path(outputPath(sim), paste0("standAgeMap_year", padYear, ".tif"))
+    terra::writeRaster(mod$standAgeMap, f_standAgeMap, datatype = "INT2U", overwrite = TRUE)
+    sim <- registerOutputs(f_standAgeMap, sim, objectName = "standAgeMap", fun = "terra::writeRaster")
+
+    f_vegTypeMap <- file.path(outputPath(sim), paste0("vegTypeMap_year", padYear, ".tif"))
+    terra::writeRaster(mod$vegTypeMap, f_vegTypeMap, datatype = "INT2U", overwrite = TRUE)
+    sim <- registerOutputs(f_vegTypeMap, sim, objectName = "vegTypeMap", fun = "terra::writeRaster")
+  }
+
+  if (time(sim) %in% times_during) {
+    f_cohortData <- file.path(outputPath(sim), paste0("cohortData_year", padYear, ".qs2"))
+    qs2::qs_save(sim$cohortData, f_cohortData)
+    sim <- registerOutputs(f_cohortData, sim, objectName = "cohortData", fun = "qs2::qs_save")
+
+    f_pixelGroupMap <- file.path(outputPath(sim), paste0("pixelGroupMap_year", padYear, ".tif"))
+    terra::writeRaster(sim$pixelGroupMap, f_pixelGroupMap, datatype = "INT4U", overwrite = TRUE)
+    sim <- registerOutputs(f_pixelGroupMap, sim, objectName = "pixelGroupMap", fun = "terra::writeRaster")
+
+    nextTime <- time(sim) + P(sim)$summaryInterval
+    ## times scheduled by init are not scheduled a second time here
+    if (time(sim) >= P(sim)$summaryPeriod[1] && time(sim) < P(sim)$summaryPeriod[2] && !nextTime %in% mod$initTimes) {
+      sim <- scheduleEvent(sim, nextTime, "NRV_summary", "save_single", .last())
+    }
+  }
+
+  ## objects to save at end of simulation -----------------------------------------------------
+  if (time(sim) == end(sim)) {
+    f_flammableMap <- file.path(outputPath(sim), paste0("flammableMap_year", padYear, ".tif"))
+    terra::writeRaster(sim$flammableMap, f_flammableMap, datatype = "INT2U", overwrite = TRUE)
+    sim <- registerOutputs(f_flammableMap, sim, objectName = "flammableMap", fun = "terra::writeRaster")
+  }
+  sim
 }
 
 saveAnnualSeries <- function(sim) {

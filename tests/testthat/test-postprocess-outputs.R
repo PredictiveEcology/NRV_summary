@@ -68,3 +68,36 @@ test_that("the masked current-condition maps keep the <rep>/<prefix>_year<YYYY>.
   expect_warning(same <- maskCC(src, other, ccDir), "does not match")
   expect_identical(same, src)
 })
+
+test_that("save_single registers each saved file with the name of the object it holds", {
+  ## A replay loads the archived files back as inputs by objectName; it was NA for every data file.
+  withr::local_package("SpaDES.core")
+  mod <- new.env()
+  r <- terra::rast(nrows = 2, ncols = 2, xmin = 0, xmax = 2, ymin = 0, ymax = 2, crs = "EPSG:3857",
+                   vals = 1:4)
+  mod$analysesOutputsTimes <- 0
+  mod$initTimes <- 0
+  mod$standAgeMap <- r
+  mod$vegTypeMap <- r
+  sim <- SpaDES.core::simInit(times = list(start = 0, end = 0), paths = testPaths)
+  sim$sppColorVect <- c(a = "red")
+  sim$sppEquiv <- data.frame(x = "a")
+  sim$speciesLayers <- r
+  sim$cohortData <- data.frame(pixelGroup = 1L)
+  sim$pixelGroupMap <- r
+  sim$flammableMap <- r
+
+  saveSingle <- moduleFn(".saveSingle", mod)
+  e <- environment(saveSingle)
+  e$P <- function(sim) list(timeSeriesTimes = numeric(0), summaryPeriod = c(0, 0), summaryInterval = 10)
+  sim <- saveSingle(sim)
+
+  o <- SpaDES.core::outputs(sim)
+  expect_false(anyNA(o$objectName))
+  nm <- sub("_year.*$", "", basename(o$file))
+  expect_identical(o$objectName, nm)
+  expect_false(anyNA(o$fun))
+  expect_true(all(o$package %in% c("qs2", "terra")))
+  expect_setequal(nm, c("sppColorVect", "sppEquiv", "speciesLayers", "standAgeMap", "vegTypeMap",
+                        "cohortData", "pixelGroupMap", "flammableMap"))
+})
