@@ -2245,7 +2245,32 @@ plotFun <- function(sim) {
                by = c("poly", "metric"))
   tol <- 1e-9 * pmax(1, abs(nrv$lo), abs(nrv$hi)) ## a value equal to an end is inside
   nrv$position <- ifelse(nrv$current < nrv$lo - tol, "below", ifelse(nrv$current > nrv$hi + tol, "above", "inside"))
+  nrv$tested <- .nrvTested(nrv)
   nrv
+}
+
+## Whether each row of comparisons is a test of the current condition: a leading type that is 0 in the current condition
+## and in the NRV (it leads nowhere) is not. The one definition of the rule, for the figure, nrvInside.csv and readers.
+.nrvTested <- function(cmp) !(grepl("^lead_", cmp$metric) & cmp$current == 0 & cmp$hi == 0)
+
+## Per polygon, the tests (`tested` rows of every group) of `cmp` (poly, position, tested) and how many fall inside the
+## NRV range: poly, nTests, nInside, pctInside (100 * nInside / nTests).
+.nrvInside <- function(cmp) {
+  cmp <- cmp[cmp$tested, , drop = FALSE]
+  polys <- unique(cmp$poly)
+  out <- data.frame(poly = polys,
+                    nTests = vapply(polys, function(p) sum(cmp$poly == p), integer(1), USE.NAMES = FALSE),
+                    nInside = vapply(polys, function(p) sum(cmp$poly == p & cmp$position == "inside"), integer(1),
+                                     USE.NAMES = FALSE))
+  out$pctInside <- 100 * out$nInside / out$nTests
+  out
+}
+
+## Write `.nrvInside()` of `cmp` to `dir`/nrvInside.csv; returns the file.
+.writeNrvInside <- function(cmp, dir) {
+  f <- file.path(dir, "nrvInside.csv")
+  utils::write.csv(.nrvInside(cmp), f, row.names = FALSE)
+  f
 }
 
 ## Write `.nrvComparison()` of one analysis `kind` and reporting `layer` to csv/<kind>/<layer>/<kind>_nrvComparison.csv
@@ -2265,6 +2290,7 @@ plotFun <- function(sim) {
 ## (`currentConditionAll()`), with its group and the metric's label (a `label` column, else `.metricLabel()`).
 .recordComparison <- function(kind, cmp, layer = "") {
   cmp$group <- unname(.ccAllGroups[kind])
+  cmp$order <- NULL ## the figure orders its own rows (.currentConditionAllData()); only st has the column
   if (is.null(cmp$label)) cmp$label <- .metricLabel(cmp$metric)
   mod$nrvComparisons[[paste(kind, layer)]] <- cmp
   invisible()
@@ -2323,14 +2349,21 @@ plotFun <- function(sim) {
          ifelse(metric == "forested", 3, 4))))
 }
 
+## The position of each stand-level row (`metric`, `label`) in the order above, ties by label: 1, 2, ... (the `order`
+## column of st_nrvComparison.csv; the figure sorts by it).
+.standOrder <- function(metric, label) order(order(.standRank(metric, rep("stand", length(metric))), label))
+
 ## The rows of the figure from the recorded comparisons (`poly`, `metric`, `group`, `label`, `lo`, `hi`, `mid`,
 ## `current`, `position`): a leading type that is 0 in the current condition and in the NRV is dropped; the NRV
 ## mid and the current condition are rescaled (xMid, xCurrent); the current condition is drawn at xPlot, clipped
 ## to `.ccAllLimits` (clipped = TRUE); y is the row, from the top, with a row above each group for its title.
 .currentConditionAllData <- function(cmp) {
-  cmp <- cmp[!(grepl("^lead_", cmp$metric) & cmp$current == 0 & cmp$hi == 0), , drop = FALSE]
+  cmp <- cmp[.nrvTested(cmp), , drop = FALSE]
   cmp$group <- factor(cmp$group, names(.ccAllTitles))
-  cmp <- cmp[order(cmp$group, .standRank(cmp$metric, cmp$group), ifelse(cmp$group == "stand", cmp$label, "")), , drop = FALSE]
+  stand <- cmp$group == "stand"
+  rank <- integer(nrow(cmp)) ## landscape rows keep their order
+  rank[stand] <- .standOrder(cmp$metric[stand], cmp$label[stand])
+  cmp <- cmp[order(cmp$group, rank), , drop = FALSE]
   cmp$xMid <- .nrvScale(cmp$mid, cmp$lo, cmp$hi)
   cmp$xCurrent <- .nrvScale(cmp$current, cmp$lo, cmp$hi)
   cmp$xPlot <- pmin(pmax(cmp$xCurrent, .ccAllLimits[1]), .ccAllLimits[2])
@@ -2388,6 +2421,7 @@ currentConditionAll <- function(sim) {
     return(invisible(sim))
   }
   polys <- unique(cmp$poly)
+  sim <- registerOutputs(.writeNrvInside(cmp, reproducible::checkPath(file.path(.ppRoot(sim), "csv", "all"), create = TRUE)), sim)
   types <- P(sim)$.plots
   dir <- reproducible::checkPath(file.path(.ppRoot(sim), "figures", "all"), create = TRUE)
   for (p in polys) {
@@ -2455,17 +2489,18 @@ currentConditionAll <- function(sim) {
   res
 }
 
-## Area burned (ha) per block of `blockYears` years per rep, from the fire-size table of
-## burnSummaries (columns rep, year, areaBurnedHa). Blocks with no fire are 0, not missing: a
-## missing block would hide exactly the trend a shrinking fire regime shows. `time` = block start.
-.burnBlockSeries <- function(fireSizes, years, blockYears = 100L) {
-  starts <- seq(years[1L], years[2L] - 1L, by = blockYears)
-  reps <- sort(unique(fireSizes$rep))
-  blocks <- expand.grid(rep = reps, time = starts)
-  blocks$value <- mapply(function(r, t) {
-    sum(fireSizes$areaBurnedHa[fireSizes$rep == r & fireSizes$year >= t & fireSizes$year < t + blockYears])
-  }, blocks$rep, blocks$time)
-  blocks
+## The per-block fire table burnSummaries writes (burnSummaries_fireBlocks.csv: rep, block, nFires, areaBurnedHa;
+## blocks with no fire are 0), among the registered output `files`; NULL when it did not run. It is built from
+## the fire sizes every fire model writes, so the area burned is there for LandMine and scfm as well as fireSense.
+.burnBlocksFile <- function(files) {
+  f <- files[basename(files) == "burnSummaries_fireBlocks.csv"]
+  if (length(f)) f[length(f)]
+}
+
+## The stability series of the area burned per block, from that table: rep, time (the block's first year), value.
+.burnSeries <- function(file) {
+  b <- data.table::fread(file)
+  data.frame(rep = b$rep, time = b$block, value = b$areaBurnedHa)
 }
 
 ## One value per rep x time per series: patch-level rows (one per patch) are not a series, only the
@@ -2498,9 +2533,9 @@ currentConditionAll <- function(sim) {
     data.frame(kind = "st", layer = P(sim)$.studyAreaName, poly = P(sim)$.studyAreaName, level = "landscape",
                class = NA_character_, metric = d$metric, rep = d$rep, time = d$time, value = d$value)
   }
-  fs <- file.path(outputPath(sim), "burnSummaries_fireSizes_allReps.csv")
-  burn <- if (file.exists(fs)) {
-    b <- .burnBlockSeries(data.table::fread(fs), P(sim)$simTimes, P(sim)$summaryInterval)
+  fb <- .burnBlocksFile(outputs(sim)$file)
+  burn <- if (!is.null(fb)) {
+    b <- .burnSeries(fb)
     data.frame(kind = "burn", layer = P(sim)$.studyAreaName, poly = P(sim)$.studyAreaName,
                level = "landscape", class = NA_character_, metric = "areaBurnedHa per block",
                rep = b$rep, time = b$time, value = b$value)
@@ -2595,7 +2630,7 @@ stabilityCheck <- function(sim) {
 ## ---- stand-level measures (the `st` event) ------------------------------------------------------------
 ## At each summary time of each rep, and for the current condition, over the reporting area
 ## (`studyAreaReporting`): the share of the forested area in each age class (`ageClasses`, `ageClassCutOffs`;
-## the saved standAgeMap), the forested share of the area, the share of the area led by each vegetation
+## the saved standAgeMap), the forested share of the area, the share of the forested area led by each vegetation
 ## type (the saved vegTypeMap) and the total tree biomass (Tg; the saved cohortData and pixelGroupMap).
 ## A pixel is forested when it has a stand age and a pixel group above 0. Read from the snapshots the
 ## lm/pm events read, so the current condition is the same year-0 state (urban removed when
@@ -2603,7 +2638,7 @@ stabilityCheck <- function(sim) {
 
 ## One snapshot, from the values of the reporting-area pixels: `sam` stand age, `vtmCode` vegetation type code,
 ## `pgm` pixel group; `cohortData` (B in g/m2) and the pixel area in ha. Returns metric, value: age_<class>
-## (% of forested), forested (% of the area), biomassTg, lead_<code> (% of the area).
+## (% of forested), forested (% of the area), biomassTg, lead_<code> (% of the forested pixels, as the annual series).
 .standRow <- function(sam, vtmCode, pgm, cohortData, pixelHa, ageClassCutOffs, ageClasses) {
   forest <- !is.na(sam) & !is.na(pgm) & pgm > 0
   ac <- cut(sam[forest], c(ageClassCutOffs, Inf), right = FALSE, labels = ageClasses)
@@ -2614,7 +2649,7 @@ stabilityCheck <- function(sim) {
     metric = c(paste0("age_", ageClasses), "forested", "biomassTg", paste0("lead_", names(lead))),
     value = c(100 * as.numeric(table(ac)) / max(1, sum(forest)), 100 * mean(forest),
               sum(B, na.rm = TRUE) * 0.01 * pixelHa / 1e6, ## as .annualSeriesRow()
-              100 * as.numeric(lead) / length(pgm))
+              100 * as.numeric(lead) / max(1, sum(forest)))
   )
 }
 
@@ -2645,7 +2680,7 @@ stabilityCheck <- function(sim) {
   out[order(out$rep, out$time, out$metric), ]
 }
 
-.leadingYlab <- "Share of the area (%)" ## the y title of the leading-type figures
+.leadingYlab <- "Share of the forested area (%)" ## the y title of the leading-type figures
 .standFigSize <- list(width = 9, height = 5, units = "in") ## the size of a stand-level figure
 
 ## The class a stand-level metric is about, for a legend where the axis says what is measured: the age class,
@@ -2667,7 +2702,7 @@ stabilityCheck <- function(sim) {
   ifelse(metric == "biomassTg", "Total tree biomass (Tg)",
   ifelse(metric == "forested", "Forested share of the area (%)",
   ifelse(grepl("^age_", metric), paste0(cls, " forest, share of forested area (%)"),
-         paste0(cls, " leading, share of the area (%)"))))
+         paste0(cls, " leading, share of forested area (%)"))))
 }
 
 ## The layers that draw replicates: each a thin line (`series`, `mapping` naming its group), the median over
@@ -2759,6 +2794,7 @@ standMetrics <- function(sim) {
   env <- data.frame(poly = sa, metric = env$metric, time = env$time, env$value)
   cmp <- .nrvComparison(env, data.frame(poly = sa, metric = ccRows$metric, mean = ccRows$value), .nrvPeriod(sim))
   cmp$label <- .standLabel(cmp$metric, sim$sppEquiv, P(sim)$sppEquivCol)
+  cmp$order <- .standOrder(cmp$metric, cmp$label)
   .recordComparison("st", cmp, sa)
 
   d <- .ppCsvDir(sim, "st", sa)
@@ -2768,7 +2804,7 @@ standMetrics <- function(sim) {
   utils::write.csv(cmp, fs[3], row.names = FALSE)
   mod$ppFiles <- c(mod$ppFiles, fs)
 
-  ## figures: age classes, leading types (those leading at least 0.5% of the area in some snapshot), biomass
+  ## figures: age classes, leading types (those leading at least 0.5% of the forested area in some snapshot), biomass
   leadMax <- tapply(series$value, series$metric, max)
   groups <- list(
     age = list(m = paste0("age_", P(sim)$ageClasses), ylab = "Share of forested area (%)", what = "forest age classes"),
