@@ -11,8 +11,9 @@ test_that("a snapshot's stand-level row: age classes of forest, forested and lea
   v <- setNames(r$value, r$metric)
   expect_equal(v[paste0("age_", c("Young", "Immature", "Mature", "Old"))], setNames(rep(25, 4), paste0("age_", c("Young", "Immature", "Mature", "Old"))))
   expect_equal(v[["forested"]], 100 * 4 / 6)
-  expect_equal(v[["lead_Pice_mar"]], 100 * 3 / 6)
-  expect_equal(v[["lead_Mixed"]], 100 * 1 / 6)
+  ## leading types are shares of the forested pixels (4), as the annual series
+  expect_equal(v[["lead_Pice_mar"]], 100 * 3 / 4)
+  expect_equal(v[["lead_Mixed"]], 100 * 1 / 4)
   ## B over the pixels: 2 x 300 + 2 x 1000 g/m2, x 6.25 ha x 1e4 m2/ha, in Tg
   expect_equal(v[["biomassTg"]], (2 * 300 + 2 * 1000) * 6.25 * 1e4 / 1e12)
 })
@@ -50,7 +51,7 @@ test_that("the current condition is inside, above or below the NRV range of the 
 test_that("stand-level labels name the leading type by sppEquiv", {
   se <- data.frame(LandR = "Pice_mar", EN_generic_full = "Black spruce")
   expect_identical(.standLabel(c("lead_Pice_mar", "age_Old", "forested", "biomassTg"), se),
-                   c("Black spruce leading, share of the area (%)", "Old forest, share of forested area (%)",
+                   c("Black spruce leading, share of forested area (%)", "Old forest, share of forested area (%)",
                      "Forested share of the area (%)", "Total tree biomass (Tg)"))
 })
 
@@ -100,4 +101,58 @@ test_that("each leading type, the mixed class included, gets a figure with its p
   expect_identical(f$lead_A$cc$position, "below")
   expect_identical(unique(f$lead_A$series$rep), 1:5)
   expect_silent(ggplot2::ggplot_build(.standSeriesPanels(f$lead_A)))
+})
+
+test_that("series and current condition of a stand-level row are on one scale (percent), so a snapshot is inside its own range", {
+  sam <- c(10, 50, 90, 150); pgm <- 1:4; vtm <- c("A", "A", "B", "B")
+  cd <- data.frame(pixelGroup = 1:4, B = 100)
+  r <- .standRow(sam, vtm, pgm, cd, 6.25, c(0, 40, 80, 120), c("Young", "Immature", "Mature", "Old"))
+  env <- data.frame(poly = "E", metric = r$metric, time = 1000, mean = r$value, min = r$value * 0.9, max = r$value * 1.1)
+  cmp <- .nrvComparison(env, data.frame(poly = "E", metric = r$metric, mean = r$value), c(0, 2000))
+  expect_true(all(cmp$position == "inside"))
+  expect_equal(sum(cmp$current[grepl("^age_", cmp$metric)]), 100) ## shares of the forest, not proportions
+  expect_equal(sum(cmp$current[grepl("^lead_", cmp$metric)]), 100) ## forested everywhere here
+})
+
+test_that("a comparison row says whether it is a test: a leading type that leads nowhere is not", {
+  env <- data.frame(poly = "E", metric = rep(c("lead_A", "lead_Zero", "age_Old"), each = 2), time = rep(c(0, 100), 3),
+                    mean = c(5, 5, 0, 0, 0, 0), min = c(4, 4, 0, 0, 0, 0), max = c(6, 6, 0, 0, 0, 0))
+  cc <- data.frame(poly = "E", metric = c("lead_A", "lead_Zero", "age_Old"), mean = c(5, 0, 0))
+  r <- .nrvComparison(env, cc, c(0, 100))
+  expect_identical(setNames(r$tested, r$metric)[c("lead_A", "lead_Zero", "age_Old")],
+                   c(lead_A = TRUE, lead_Zero = FALSE, age_Old = TRUE)) ## age_Old at 0 is a real test
+  ## the combined figure drops exactly the rows that are not tests
+  r$group <- "stand"; r$label <- r$metric
+  expect_false("lead_Zero" %in% .currentConditionAllData(r)$metric)
+})
+
+test_that("the stand-level order is biomass, age classes young to old, forested, then leading types by label", {
+  m <- c("lead_B", "age_Old", "forested", "lead_A", "age_Young", "biomassTg", "age_Mature")
+  lab <- c("Beta", "Old", "Forested", "Alpha", "Young", "Biomass", "Mature")
+  o <- .standOrder(m, lab)
+  expect_type(o, "integer")
+  expect_identical(m[order(o)], c("biomassTg", "age_Young", "age_Mature", "age_Old", "forested", "lead_A", "lead_B"))
+})
+
+test_that("nrvInside counts the tests of every group inside the NRV range, per polygon", {
+  cmp <- data.frame(
+    poly = rep(c("E1", "E2"), c(5, 3)), group = "stand",
+    metric = c("ai", "age_Old", "lead_A", "lead_Zero", "forested", "ai", "lead_Zero", "lead_A"),
+    position = c("inside", "above", "inside", "inside", "below", "inside", "inside", "inside"),
+    tested = c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, TRUE))
+  r <- .nrvInside(cmp)
+  expect_identical(names(r), c("poly", "nTests", "nInside", "pctInside"))
+  expect_identical(r$poly, c("E1", "E2"))
+  expect_identical(r$nTests, c(4L, 2L))
+  expect_identical(r$nInside, c(2L, 2L))
+  expect_equal(r$pctInside, c(50, 100))
+})
+
+test_that("nrvInside.csv is written with one row per polygon", {
+  cmp <- data.frame(poly = c("E1", "E1", "E2"), position = c("inside", "below", "inside"), tested = TRUE)
+  f <- .writeNrvInside(cmp, withr::local_tempdir())
+  expect_identical(basename(f), "nrvInside.csv")
+  d <- utils::read.csv(f)
+  expect_identical(names(d), c("poly", "nTests", "nInside", "pctInside"))
+  expect_equal(d$pctInside, c(50, 100))
 })

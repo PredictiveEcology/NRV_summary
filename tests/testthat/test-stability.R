@@ -72,13 +72,27 @@ test_that("the verdict line counts the series still changing", {
                    "0 of 1 metrics still changing; the run is long enough")
 })
 
-test_that("area burned per block counts blocks with no fire as zero", {
-  fs <- data.frame(rep = c(1, 1, 2), year = c(2025, 2230, 2030), areaBurnedHa = c(100, 50, 7))
-  b <- .burnBlockSeries(fs, c(2020, 2320), 100L)
-  expect_equal(nrow(b), 2 * 3) ## 2 reps x 3 blocks
+test_that("the burn series is burnSummaries' own block table, found through the registered outputs", {
+  ## LandMine or scfm fires: burnSummaries' block table has the area burned; its fire sizes have no areaBurnedHa
+  blocks <- data.frame(rep = rep(1:2, each = 3), block = rep(c(2020, 2120, 2220), 2), nFires = 4L,
+                       areaBurnedHa = c(100, 0, 50, 7, 7, 7))
+  f <- file.path(withr::local_tempdir(), "burnSummaries_fireBlocks.csv")
+  utils::write.csv(blocks, f, row.names = FALSE)
+  other <- file.path(dirname(f), "burnSummaries_fireSizes_allReps.csv")
+  files <- c(other, f, "somewhere/else/burnSummaries_fireRegime.csv")
+  expect_identical(.burnBlocksFile(files), f)
+  expect_null(.burnBlocksFile(c(other, "a/b.csv")))
+  b <- .burnSeries(f)
   expect_equal(b$value[b$rep == 1], c(100, 0, 50))
-  expect_equal(b$value[b$rep == 2], c(7, 0, 0))
-  expect_equal(unique(b$time), c(2020, 2120, 2220))
+  expect_equal(b$time[b$rep == 1], c(2020, 2120, 2220))
+  expect_true(all(b$value[b$rep == 2] == 7))
+  ## the verdict sees a growing burn that the old areaBurnedHa column (always 0 here) hid
+  grow <- data.frame(rep = rep(1:5, each = 11), block = rep(seq(0, 1000, 100), 5), nFires = 1L,
+                     areaBurnedHa = rep(seq(0, 1000, 100), 5) + rep(1:5, each = 11))
+  utils::write.csv(grow, f, row.names = FALSE)
+  g <- .burnSeries(f)
+  g$metric <- "areaBurnedHa per block"
+  expect_identical(.trendStability(g, "metric", c(500, 1000))$flag, "still changing")
 })
 
 test_that("the stability series keep landscape and class rows, not one row per patch", {

@@ -2,6 +2,18 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- The century-block burn stability check reads burnSummaries' own per-block table (`burnSummaries_fireBlocks.csv`, found
+  through the registered outputs) instead of an `areaBurnedHa` column that only fireSense writes. With LandMine or scfm
+  fires the area burned was always 0, so the check always said "stable". `.burnBlockSeries()` is removed.
+
+- `st_nrvComparison.csv` and `lm_nrvComparison.csv` have a `tested` column (FALSE for a leading type that is 0 in the
+  current condition and the NRV), and `st_nrvComparison.csv` an integer `order` column (the order of the figure's rows).
+  New `csv/all/nrvInside.csv`: per polygon, `nTests`, `nInside` and `pctInside` over the tested rows of `lm` and `st`.
+
+- Stand-level (`st`) leading-type shares are now percent of the forested pixels, as in the annual series, not of all
+  reporting pixels; the forested share of the area is still reported as `forested`. `lead_*` values, ranges and
+  positions in `st*.csv` change; labels read "share of forested area (%)".
+
 - Single mode registers each saved data file (cohortData, pixelGroupMap, standAgeMap, vegTypeMap, sppEquiv, sppColorVect,
   speciesLayers, flammableMap) with the name of the object it holds and the function that saved it. `outputs(sim)` had
   `NA` for the object name of all of them, so a replay could not load the archived files back as inputs.
