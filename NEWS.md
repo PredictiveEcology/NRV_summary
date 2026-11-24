@@ -2,6 +2,8 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- `nationalReportingLayers` may name `Intact`, LandWebUtils' 2025 Intact Forest Landscapes, whose rows are labelled `SoF-2 primary forest`. Requires LandWebUtils 1.0.3.9057.
+
 - Requires LandWebUtils 1.0.3.9055 (`nationalReportingLayers()`). Version 2.0.0.9040.
 
 - The century-block burn stability check reads burnSummaries' own per-block table (`burnSummaries_fireBlocks.csv`, found
