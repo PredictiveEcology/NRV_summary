@@ -1,7 +1,7 @@
 ---
 title: "NRV_summary Manual"
 subtitle: "v.2.0.0.9040"
-date: "Last updated: 2026-11-23"
+date: "Last updated: 2026-11-24"
 output:
   bookdown::html_document2:
     toc: true
@@ -355,7 +355,7 @@ Summary of user-visible parameters (Table \@ref(tab:moduleParams-NRV-summary)).
    <td style="text-align:left;">  </td>
    <td style="text-align:left;"> NA </td>
    <td style="text-align:left;"> NA </td>
-   <td style="text-align:left;"> (mode = 'multi') layers of `LandWebUtils::nationalReportingLayers()` to add to `reportingPolygons`, by `NAME_SHORT`: any of 'Province', 'Ecozone', 'Protected', 'BorealCaribou'. Each is clipped to `studyAreaReporting`, so a run reports its own pieces of a province or an ecozone. </td>
+   <td style="text-align:left;"> (mode = 'multi') layers of `LandWebUtils::nationalReportingLayers()` to add to `reportingPolygons`, by `NAME_SHORT`: any of 'Province', 'Ecozone', 'Protected', 'BorealCaribou', 'Intact' (intact forest, the stand-in for primary forest). Each is clipped to `studyAreaReporting`, so a run reports its own pieces of a province or an ecozone. </td>
    <td style="text-align:left;"> TRUE </td>
   </tr>
   <tr>
