@@ -183,6 +183,7 @@ test_that("rows are labelled by the State of the Forest indicators they speak to
   expect_identical(.sofIndicator(c("age_Old", "forested"), "Protected"),
                    c("SoF-1 old growth; SoF-3 protected areas", "SoF-3 protected areas"))
   expect_identical(.sofIndicator("burnedRecent", "BorealCaribou"), "SoF-5 boreal caribou")
+  expect_identical(.sofIndicator("bigOld", "Intact"), "SoF-1 old growth; SoF-2 primary forest")
   expect_identical(.sofIndicator("ai", "ELF"), NA_character_)
 })
 
