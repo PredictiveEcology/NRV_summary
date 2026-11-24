@@ -18,7 +18,7 @@ defineModule(sim, list(
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
     "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9054)", ## leadingSpeciesProp(), leadingByPixelGroup()
-    "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9057)", ## sppEquiv_groups(), recode_cohorts(), nationalReportingLayers()
+    "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9058)", ## sppEquiv_groups(), recode_cohorts(), nationalReportingLayers()
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
     ## calculatePatchMetrics()/calculatePatchMetricsSeral()/nrv_metrics_landscape() on those with
@@ -150,7 +150,8 @@ defineModule(sim, list(
     defineParameter("nationalReportingLayers", "character", character(0), NA, NA,
                     paste("(mode = 'multi') layers of `LandWebUtils::nationalReportingLayers()` to add to",
                           "`reportingPolygons`, by `NAME_SHORT`: any of 'Province', 'Ecozone', 'Protected',",
-                          "'BorealCaribou', 'Intact' (intact forest, the stand-in for primary forest). Each is",
+                          "'BorealCaribou', 'Intact' and 'Intact2000' (intact forest in 2025 and 2000, the stand-in for primary",
+                          "forest; with `sofIndicators`, csv/sof/Intact/intact_extent.csv gives its loss). Each is",
                           "clipped to `studyAreaReporting`, so a run reports its own pieces of a province or an",
                           "ecozone.")),
     defineParameter("nationalReportingLayersPath", "character", NA_character_, NA, NA,
@@ -606,6 +607,7 @@ InitMulti <- function(sim) {
   ## `reportingPolygons` and the national layers but `standOnlyLayers`
   mod$standPolyNames <- names(national)
   mod$rptPolyNames <- c(names(sim$reportingPolygons), setdiff(names(national), P(sim)$standOnlyLayers))
+  .intactExtent(sim, national)
 
   # ! ----- STOP EDITING ----- ! #
 
@@ -830,6 +832,30 @@ InitMulti <- function(sim) {
 
 .ppCsvDir <- function(sim, kind, layer, ...) {
   reproducible::checkPath(file.path(.ppRoot(sim), "csv", kind, layer, ...), create = TRUE)
+}
+
+## The intact forest of each IFL year asked for (the national `Intact` layers: `Intact` 2025, `Intact2000`) in the
+## reporting area: its area, its share of the reporting area, and the loss since the earliest of those years
+## (SoF-2, primary forest). Written, with `sofIndicators`, to csv/sof/Intact/intact_extent.csv.
+.intactExtent <- function(sim, national) {
+  want <- grep("^Intact", P(sim)$nationalReportingLayers, value = TRUE)
+  if (!isTRUE(P(sim)$sofIndicators) || !length(want)) {
+    return(invisible())
+  }
+  lyrs <- LandWebUtils::nationalReportingLayers()
+  year <- as.integer(sub(".*IFL_([0-9]{4})\\.gpkg$", "\\1", lyrs$id[match(want, lyrs$NAME_SHORT)]))
+  km2 <- function(x) sum(as.numeric(sf::st_area(x))) / 1e6
+  ## a year with no intact forest in the reporting area has no layer
+  area <- vapply(want, function(l) if (is.null(national[[l]])) 0 else km2(national[[l]]), numeric(1))
+  d <- data.frame(layer = want, year = year, area_km2 = unname(area))
+  d <- d[order(d$year), ]
+  d$share_pct <- 100 * d$area_km2 / km2(sf::st_as_sf(sim$studyAreaReporting))
+  d$loss_km2 <- d$area_km2[1] - d$area_km2
+  d$loss_pct <- if (d$area_km2[1] > 0) 100 * d$loss_km2 / d$area_km2[1] else NA_real_
+  f <- file.path(.ppCsvDir(sim, "sof", "Intact"), "intact_extent.csv")
+  utils::write.csv(d, f, row.names = FALSE)
+  mod$ppFiles <- c(mod$ppFiles, f)
+  invisible(d)
 }
 
 ## The `files` saved in one of `years`, by the `_year<YYYY>.` of the file name (zero-padded or not). The year
@@ -2806,14 +2832,14 @@ stabilityCheck <- function(sim) {
 ## State of the Forest (2026)" (stateoftheforest.ca) asks Canada's State of the Forest report to add, of which
 ## the simulations speak to five. By metric (old growth: the oldest of the default age classes and the big-treed
 ## old forest; boreal caribou: recent fire and young forest; carbon: tree biomass) and by reporting layer (the
-## national `Intact`, `Protected` and `BorealCaribou` layers). "SoF-<n> <name>", several joined by "; ", or NA.
+## national `Intact`, `Intact2000`, `Protected` and `BorealCaribou` layers). "SoF-<n> <name>", several joined by "; ", or NA.
 .sofIndicators <- c(`SoF-1` = "old growth", `SoF-2` = "primary forest", `SoF-3` = "protected areas", `SoF-5` = "boreal caribou",
                     `SoF-6` = "forest carbon")
 .sofIndicator <- function(metric, layer = "") {
   byMetric <- ifelse(metric %in% c("age_Old", "bigOld"), "SoF-1",
               ifelse(metric %in% c("burnedRecent", "youngRecent"), "SoF-5",
               ifelse(metric == "biomassTg", "SoF-6", NA_character_)))
-  byLayer <- c(Intact = "SoF-2", Protected = "SoF-3", BorealCaribou = "SoF-5")[layer]
+  byLayer <- c(Intact = "SoF-2", Intact2000 = "SoF-2", Protected = "SoF-3", BorealCaribou = "SoF-5")[layer]
   vapply(byMetric, function(m) {
     k <- unique(stats::na.omit(c(m, byLayer)))
     if (length(k)) paste(k, .sofIndicators[k], collapse = "; ") else NA_character_

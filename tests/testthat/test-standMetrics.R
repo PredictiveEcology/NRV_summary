@@ -326,3 +326,37 @@ test_that("the landscape-metric comparisons of a national layer carry its indica
   fn(sim, transform(env, poly = "ELF"), data.frame(poly = "ELF", metric = "ai", mean = 4), "lm", "ELF")
   expect_identical(names(mod$nrvComparisons), "lm ELF")
 })
+
+test_that("the intact-forest extent gives each year's area, share and loss since 2000", {
+  withr::local_package("SpaDES.core")
+  mod <- new.env()
+  fn <- moduleFn(".intactExtent", mod)
+  testthat::local_mocked_bindings(P = function(sim, ...) SpaDES.core::params(sim)$NRV_summary)
+  out <- withr::local_tempdir()
+  ## a 10 x 10 km reporting area; 50 km2 intact in 2000, 30 km2 in 2025
+  sq <- function(x) sf::st_sf(Name = "Intact", geometry = sf::st_sfc(sf::st_polygon(list(
+    rbind(c(0, 0), c(x, 0), c(x, 10000), c(0, 10000), c(0, 0)))), crs = 3978))
+  sim <- SpaDES.core::simInit(times = list(start = 0, end = 100),
+                              params = list(NRV_summary = list(mode = "multi", reps = 1L, summaryPeriod = c(0L, 100L))),
+                              modules = moduleName,
+                              objects = list(reportingPolygons = list(ELF = "placeholder"),
+                                             studyAreaReporting = terra::vect(sq(10000))),
+                              paths = utils::modifyList(testPaths, list(outputPath = file.path(out, "mainSim"))))
+  national <- list(Intact = sq(3000), Intact2000 = sq(5000))
+  SpaDES.core::params(sim)$NRV_summary$nationalReportingLayers <- c("Intact", "Intact2000")
+  ## by default, no table
+  expect_null(fn(sim, national))
+  SpaDES.core::params(sim)$NRV_summary$sofIndicators <- TRUE
+  d <- fn(sim, national)
+  f <- file.path(out, "postprocess", "csv", "sof", "Intact", "intact_extent.csv")
+  expect_identical(utils::read.csv(f)$layer, c("Intact2000", "Intact"))
+  expect_identical(d$year, c(2000L, 2025L))
+  expect_equal(d$area_km2, c(50, 30))
+  expect_equal(d$share_pct, c(50, 30))
+  expect_equal(d$loss_km2, c(0, 20))
+  expect_equal(d$loss_pct, c(0, 40))
+  expect_true(f %in% mod$ppFiles)
+  ## a year with no intact forest left in the reporting area counts as none
+  expect_equal(fn(sim, national["Intact2000"])$area_km2, c(50, 0))
+  expect_identical(.sofIndicator("bigOld", "Intact2000"), "SoF-1 old growth; SoF-2 primary forest")
+})
