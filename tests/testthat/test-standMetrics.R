@@ -334,7 +334,7 @@ test_that("the intact-forest extent gives each year's area, share and loss since
   testthat::local_mocked_bindings(P = function(sim, ...) SpaDES.core::params(sim)$NRV_summary)
   out <- withr::local_tempdir()
   ## a 10 x 10 km reporting area; 50 km2 intact in 2000, 30 km2 in 2025
-  sq <- function(x) sf::st_sf(Name = "Intact", geometry = sf::st_sfc(sf::st_polygon(list(
+  sq <- function(x, nm = "Intact") sf::st_sf(Name = nm, geometry = sf::st_sfc(sf::st_polygon(list(
     rbind(c(0, 0), c(x, 0), c(x, 10000), c(0, 10000), c(0, 0)))), crs = 3978))
   sim <- SpaDES.core::simInit(times = list(start = 0, end = 100),
                               params = list(NRV_summary = list(mode = "multi", reps = 1L, summaryPeriod = c(0L, 100L))),
@@ -342,7 +342,7 @@ test_that("the intact-forest extent gives each year's area, share and loss since
                               objects = list(reportingPolygons = list(ELF = "placeholder"),
                                              studyAreaReporting = terra::vect(sq(10000))),
                               paths = utils::modifyList(testPaths, list(outputPath = file.path(out, "mainSim"))))
-  national <- list(Intact = sq(3000), Intact2000 = sq(5000))
+  national <- list(Intact = sq(3000), Intact2000 = sq(5000, "Intact2000"))
   SpaDES.core::params(sim)$NRV_summary$nationalReportingLayers <- c("Intact", "Intact2000")
   ## by default, no table
   expect_null(fn(sim, national))

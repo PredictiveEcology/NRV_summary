@@ -18,7 +18,7 @@ defineModule(sim, list(
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
     "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9054)", ## leadingSpeciesProp(), leadingByPixelGroup()
-    "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9058)", ## sppEquiv_groups(), recode_cohorts(), nationalReportingLayers()
+    "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9059)", ## sppEquiv_groups(), recode_cohorts(), nationalReportingLayers()
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
     ## calculatePatchMetrics()/calculatePatchMetricsSeral()/nrv_metrics_landscape() on those with
@@ -836,7 +836,9 @@ InitMulti <- function(sim) {
 
 ## The intact forest of each IFL year asked for (the national `Intact` layers: `Intact` 2025, `Intact2000`) in the
 ## reporting area: its area, its share of the reporting area, and the loss since the earliest of those years
-## (SoF-2, primary forest). Written, with `sofIndicators`, to csv/sof/Intact/intact_extent.csv.
+## (SoF-2, primary forest). The loss is of land no longer intact, including landscapes split below the IFL size
+## and width thresholds, not only forest cover lost. Written, with `sofIndicators`, to
+## csv/sof/Intact/intact_extent.csv.
 .intactExtent <- function(sim, national) {
   want <- grep("^Intact", P(sim)$nationalReportingLayers, value = TRUE)
   if (!isTRUE(P(sim)$sofIndicators) || !length(want)) {
