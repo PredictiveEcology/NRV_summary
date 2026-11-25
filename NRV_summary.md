@@ -1,6 +1,6 @@
 ---
 title: "NRV_summary Manual"
-subtitle: "v.2.0.0.9043"
+subtitle: "v.2.0.0.9044"
 date: "Last updated: 2026-11-25"
 output:
   bookdown::html_document2:
@@ -368,6 +368,33 @@ Summary of user-visible parameters (Table \@ref(tab:moduleParams-NRV-summary)).
    <td style="text-align:left;"> TRUE </td>
   </tr>
   <tr>
+   <td style="text-align:left;"> fragmentationAgeThreshold </td>
+   <td style="text-align:left;"> numeric </td>
+   <td style="text-align:left;"> 20 </td>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> (mode = 'multi') with `landscapeMap = "forest"`: stands whose stand age (years, the stand-age maps of the stand outputs) is below this are non-forest, with the pixels that have no cohorts. Forest is every other pixel of the reporting area. </td>
+   <td style="text-align:left;"> TRUE </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> landscapeMap </td>
+   <td style="text-align:left;"> character </td>
+   <td style="text-align:left;"> vegType </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> (mode = 'multi') the map the 'lm' event's metrics are computed on: 'vegType' (the vegetation-type maps) or 'forest' (forest / non-forest maps made from the saved stand-age maps, non-forest being a stand age below `fragmentationAgeThreshold` or no cohorts; the current condition's urban pixels are left out as for 'vegType'). On 'forest' only the forest class (class 1) is reported, as a landscape metric named `forest_&lt;metric&gt;`: with `landscapeMetricFuns = "lsm_c_ed"`, `forest_ed`, 'Forest edge density (m/ha)'. Its rows are those of any other landscape metric in `lm_nrvComparison.csv`, the inside counts and the figures. </td>
+   <td style="text-align:left;"> TRUE </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> landscapeMetricFuns </td>
+   <td style="text-align:left;"> character </td>
+   <td style="text-align:left;"> lsm_l_ar.... </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> (mode = 'multi') the metrics of the 'lm' event: the `landscapemetrics` function names passed as `funList` to `nrvtools::nrv_metrics_landscape()`. The default is `nrvtools::default_landscape_metrics()`. </td>
+   <td style="text-align:left;"> TRUE </td>
+  </tr>
+  <tr>
    <td style="text-align:left;"> nrvWindow </td>
    <td style="text-align:left;"> numeric </td>
    <td style="text-align:left;"> 0.3 </td>
@@ -494,6 +521,19 @@ A simulated code in two groups, or a group holding both conifers and broadleaves
 The groups' colours come from the optional input `sppColorVectReporting`. With
 `sppEquivColReporting = NA` (the default), the analyses read the species-level maps the simulation
 saved.
+
+### Fragmentation: forest edge density
+
+With `landscapeMap = "forest"` the `lm` event computes its landscape metrics (`landscapeMetricFuns`) on
+forest / non-forest maps instead of the vegetation-type maps, and reports the forest class. With
+`landscapeMetricFuns = "lsm_c_ed"` that is forest edge density (m of forest edge per ha). In `mode = "multi"` it is computed on
+forest / non-forest maps built from the saved stand-age maps
+(`standAgeMap`) of each summary year and of the current condition, and written under
+`postprocess/_forestMaps/`. A pixel is non-forest if its stand age is below
+`fragmentationAgeThreshold` (20 years by default), or it has no cohorts; every other pixel of the
+reporting area is forest. The current condition leaves out urban pixels, as for the default metrics.
+The metric's rows are in `lm_nrvComparison.csv`, `nrvInside.csv` and the figures, as for any other
+landscape metric. With `landscapeMap = "vegType"` (the default) nothing changes.
 
 ### Events
 
