@@ -101,3 +101,20 @@ test_that("with landscapeMetrics = 'fragmentation' the lm event writes forest ed
   expect_identical(cmp$position, "below") ## today is below the simulated range
   expect_identical(mod$nrvComparisons[["lm ELF"]]$label, "Forest edge density (m/ha)")
 })
+
+test_that("a polygon with cells but no forest has forest edge density 0, not a missing row", {
+  rows <- function(class, poly) {
+    data.frame(layer = 1L, level = "class", class = class, id = NA_integer_, metric = "ed", value = 250,
+               rep = 1L, time = 0L, poly = poly)
+  }
+  ## polygon A has forest; B has only non-forest (class 0); C has no cells (no rows at all)
+  raw <- list(lsm_c_ed = rbind(rows(c(0L, 1L), "A"), rows(0L, "B")))
+  out <- moduleFn(".forestClassRows", new.env())(raw)[[1]]
+  expect_equal(out$poly, c("A", "B"))
+  expect_equal(out$value, c(250, 0))
+  expect_equal(unique(out$metric), "forest_ed")
+  expect_equal(unique(out$level), "landscape")
+  ## a metric that is undefined without the class stays missing
+  raw2 <- list(lsm_c_area_mn = transform(rows(0L, "B"), metric = "area_mn"))
+  expect_equal(nrow(moduleFn(".forestClassRows", new.env())(raw2)[[1]]), 0L)
+})

@@ -1124,16 +1124,32 @@ InitMulti <- function(sim) {
 ## The forest class (1) of the metrics computed on a forest / non-forest map, as landscape metrics named
 ## `forest_<metric>` (`forest_ed`, forest edge density): the class-1 rows of each metric of `raw`, a list of
 ## nrvtools::nrv_metrics_landscape()'s tables. Non-forest is the rest, and has no metric of its own.
+## landscapemetrics returns no class-1 row for a map x polygon without forest, so a polygon that has cells but
+## no forest gets 0 for the metrics that are 0 without the class (`.zeroWithoutClass`); a missing row would
+## drop its test from lm_nrvComparison.csv and the inside counts. A polygon with no cells has no rows at all.
 .forestClassRows <- function(raw) {
+  key <- c("rep", "time", "poly")
   lapply(raw, function(d) {
-    d <- d[d$class %in% 1, , drop = FALSE]
-    d$level <- rep("landscape", nrow(d))
-    d$class <- rep(NA_integer_, nrow(d))
-    d$id <- rep(NA_integer_, nrow(d))
-    d$metric <- paste0("forest_", d$metric)
-    d
+    forest <- d[d$class %in% 1, , drop = FALSE]
+    if (nrow(d) && d$metric[1L] %in% .zeroWithoutClass) {
+      cells <- unique(d[, key, drop = FALSE])
+      none <- cells[!do.call(paste, cells) %in% do.call(paste, forest[, key, drop = FALSE]), , drop = FALSE]
+      if (nrow(none)) {
+        zero <- cbind(d[rep(1L, nrow(none)), setdiff(names(d), c(key, "value")), drop = FALSE],
+                      value = 0, none)
+        forest <- rbind(forest, zero[, names(d), drop = FALSE])
+      }
+    }
+    forest$level <- rep("landscape", nrow(forest))
+    forest$class <- rep(NA_integer_, nrow(forest))
+    forest$id <- rep(NA_integer_, nrow(forest))
+    forest$metric <- rep_len(paste0("forest_", forest$metric), nrow(forest)) ## paste0() of nothing is "forest_"
+    forest
   })
 }
+
+## the class metrics that are 0 for a class absent from a map (edge density, class area, edge length)
+.zeroWithoutClass <- c("ed", "ca", "te")
 
 ## build landscape metric envelopes from vegetation type maps (VTMs), or `landscapeMap = "forest"`
 ## forest / non-forest maps
