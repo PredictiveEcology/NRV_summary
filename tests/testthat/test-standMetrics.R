@@ -196,13 +196,15 @@ test_that("rows are labelled by the State of the Forest indicators they speak to
 
 ## The stand-level event on 4 x 4 pixels of 6.25 ha, one pixel group each, in two reps; the left half is a
 ## `Protected` unit, `ELFlayer` the whole reporting area. Returns the run's output folder.
-runStandFixture <- function(sofIndicators, standPolyNames, fetch, env = parent.frame()) {
+## `species`: the species of each pixel (default: Pice_mar everywhere); `params`: more module parameters; `sppEquiv`.
+runStandFixture <- function(sofIndicators, standPolyNames, fetch, env = parent.frame(), species = rep("Pice_mar", 16),
+                            params = list(), sppEquiv = NULL) {
   ## 4 x 4 pixels of 6.25 ha, one pixel group each; the left half is protected
   r0 <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 1000, ymin = 0, ymax = 1000, crs = "EPSG:3978")
   out <- withr::local_tempdir(.local_envir = env)
   w <- function(vals, f, cat = FALSE) {
     r <- terra::setValues(r0, vals)
-    if (cat) levels(r) <- data.frame(ID = 1L, code = "Pice_mar")
+    if (cat) levels(r) <- data.frame(ID = seq_along(unique(species)), code = unique(species))
     terra::writeRaster(r, f, overwrite = TRUE)
     f
   }
@@ -213,12 +215,12 @@ runStandFixture <- function(sofIndicators, standPolyNames, fetch, env = parent.f
     dir.create(d)
     for (yr in c("000", "100")) {
       w(1:16, file.path(d, paste0("pixelGroupMap_year", yr, ".tif")))
-      w(rep(1L, 16), file.path(d, paste0("vegTypeMap_year", yr, ".tif")), cat = TRUE)
+      w(match(species, unique(species)), file.path(d, paste0("vegTypeMap_year", yr, ".tif")), cat = TRUE)
       w(if (yr == "000") ages0 else ages0 + 100, file.path(d, paste0("standAgeMap_year", yr, ".tif")))
       ## year 0: no time since fire in pixel 1; year 100: the top row burned 10 years before
       w(if (yr == "000") c(NA, rep(50, 15)) else c(rep(10, 4), rep(200, 12)),
         file.path(d, paste0("rstTimeSinceFire_year", yr, ".tif")))
-      qs2::qs_save(data.frame(pixelGroup = 1:16, B = B), file.path(d, paste0("cohortData_year", yr, ".qs2")))
+      qs2::qs_save(data.frame(pixelGroup = 1:16, speciesCode = species, B = B), file.path(d, paste0("cohortData_year", yr, ".qs2")))
     }
   }
   sq <- function(x1) sf::st_sf(Name = c(ELFlayer = "ELF", Protected = "Protected")[[x1]],
@@ -245,12 +247,13 @@ runStandFixture <- function(sofIndicators, standPolyNames, fetch, env = parent.f
   environment(fn)$.standZoneOutputs <- zoneOutputs
   sim <- SpaDES.core::simInit(
     times = list(start = 0, end = 100),
-    params = list(NRV_summary = list(mode = "multi", reps = 1:2, .plots = "png", .studyAreaName = "ELF",
-                                     simTimes = c(0, 100), summaryPeriod = c(0L, 100L), nrvWindow = 0.5,
-                                     sofIndicators = sofIndicators)),
+    params = list(NRV_summary = utils::modifyList(
+      list(mode = "multi", reps = 1:2, .plots = "png", .studyAreaName = "ELF",
+           simTimes = c(0, 100), summaryPeriod = c(0L, 100L), nrvWindow = 0.5, sofIndicators = sofIndicators),
+      params)),
     modules = moduleName, paths = utils::modifyList(testPaths, list(outputPath = file.path(out, "mainSim"))),
     objects = list(reportingPolygons = list(ELFlayer = sq("ELFlayer"), Protected = sq("Protected")),
-                   studyAreaReporting = sar)
+                   studyAreaReporting = sar, sppEquiv = sppEquiv)
   )
   sim <- fn(sim)
   out
@@ -369,4 +372,52 @@ test_that("the intact-forest extent gives each year's area, share and loss since
   ## a year with no intact forest left in the reporting area counts as none
   expect_equal(fn(sim, national["Intact2000"])$area_km2, c(50, 0))
   expect_identical(.sofIndicator("bigOld", "Intact2000"), "SoF-1 old growth; SoF-2 primary forest")
+})
+
+## 16 pixels, one cohort each: 6 black spruce, 4 pine, 3 aspen, 2 birch, 1 white spruce
+topFixtureSpecies <- c(rep("Pice_mar", 6), rep("Pinu_con", 4), rep("Popu_tre", 3), rep("Betu_pap", 2), "Pice_gla")
+topFixtureEquiv <- function() {
+  data.table::data.table(LandR = c("Pice_mar", "Pinu_con", "Popu_tre", "Betu_pap", "Pice_gla"),
+                         Type = c("Conifer", "Conifer", "Deciduous", "Deciduous", "Conifer"))
+}
+leadMetrics <- function(out) {
+  d <- utils::read.csv(file.path(out, "postprocess", "csv", "st", "ELF", "st_CC.csv"))
+  setNames(d$value, d$metric)[grepl("^lead_", d$metric)]
+}
+
+test_that("standTopSpecies keeps only the most abundant species of the current condition", {
+  withr::local_package("SpaDES.core")
+  all <- leadMetrics(runStandFixture(FALSE, character(0), function(...) stop("NBAC"), species = topFixtureSpecies,
+                                     sppEquiv = topFixtureEquiv()))
+  expect_setequal(names(all), paste0("lead_", unique(topFixtureSpecies)))
+  top <- runStandFixture(FALSE, character(0), function(...) stop("NBAC"), species = topFixtureSpecies, sppEquiv = topFixtureEquiv(),
+                         params = list(standTopSpecies = 3L))
+  expect_setequal(names(leadMetrics(top)), c("lead_Pice_mar", "lead_Pinu_con", "lead_Popu_tre"))
+  ## the comparison table and the series drop the others too
+  csv <- file.path(top, "postprocess", "csv", "st", "ELF")
+  expect_false(any(grepl("Betu_pap|Pice_gla", utils::read.csv(file.path(csv, "st_nrvComparison.csv"))$metric)))
+  expect_false(any(grepl("Betu_pap|Pice_gla", utils::read.csv(file.path(csv, "st.csv"))$metric)))
+})
+
+test_that("standGroupsCol adds the groups, Mixed included, beside the species, labelled and tested", {
+  withr::local_package("SpaDES.core")
+  out <- runStandFixture(FALSE, character(0), function(...) stop("NBAC"), species = topFixtureSpecies, sppEquiv = topFixtureEquiv(),
+                         params = list(standGroupsCol = "Type", standTopSpecies = 2L))
+  v <- leadMetrics(out)
+  ## the species (2 of them) and the groups: 11 conifer pixels (6 + 4 + 1), 5 deciduous, none mixed
+  expect_setequal(names(v), c("lead_Pice_mar", "lead_Pinu_con", "lead_Type-Conifer", "lead_Type-Deciduous"))
+  expect_equal(v[["lead_Type-Conifer"]], 100 * 11 / 16)
+  expect_equal(v[["lead_Type-Deciduous"]], 100 * 5 / 16)
+  cmp <- utils::read.csv(file.path(out, "postprocess", "csv", "st", "ELF", "st_nrvComparison.csv"))
+  g <- cmp[cmp$metric == "lead_Type-Conifer", ]
+  expect_identical(g$label, "Conifer (Type) leading, share of forested area (%)")
+  expect_true(g$tested)
+  expect_true(file.exists(file.path(out, "postprocess", "figures", "st", "ELF", "species", "lead_Type-Conifer.png")))
+})
+
+test_that("a pixel where neither type leads is Mixed in the groups", {
+  ## 2 pixel groups of the cohorts: conifer 50 / deciduous 50 is Mixed
+  grp <- LandWebUtils::sppEquiv_groups(topFixtureEquiv(), "LandR", "Type")
+  cd <- data.frame(pixelGroup = c(1L, 1L, 2L), speciesCode = c("Pice_mar", "Popu_tre", "Pice_mar"), B = c(50, 50, 100))
+  expect_identical(.groupCodes(c(1L, 2L, 3L), cd, grp, NULL, 2L), c("Mixed", "Conifer", NA))
 })

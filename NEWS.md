@@ -2,6 +2,8 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- New parameters for the stand-level (`st`) measures. `standTopSpecies` (default `NA`: every species) keeps only that many species, those leading the largest share of the forested reporting area in the current condition (the `Mixed` class stays). `standGroupsCol` (default `NA`: none), e.g. `"Type"`, adds the share led by each group of that `sppEquiv` column and by `Mixed`, as `lead_<col>-<group>` (`lead_Type-Conifer`, ...), in `st.csv`, `st_CC.csv`, `st_nrvComparison.csv` (with `tested`) and the figures. Requires LandWebUtils 1.1.0.9002 (`top_species()`).
+
 - `csv/all/nrvInside.csv` has one row per polygon and analysis `group` (`landscape`, `stand`): a new `group` column, with `nTests`, `nInside` and `pctInside` of that group's tested rows. Sum `nTests` and `nInside` over the groups for the pooled count as before.
 
 - `nationalReportingLayers` may name `Intact2000`, the intact forest of 2000 (also `SoF-2 primary forest`). With `sofIndicators = TRUE` and an `Intact` layer, `csv/sof/Intact/intact_extent.csv` gives the intact area of each year in the reporting area, its share of it, and the loss since the earliest year: land no longer intact, fragmentation included, not only forest cover lost. Requires LandWebUtils 1.0.3.9059. Version 2.0.0.9042.
