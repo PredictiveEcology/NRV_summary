@@ -146,7 +146,7 @@ defineModule(sim, list(
 ## event types
 #   - type `init` is required for initialization
 
-doEvent.NRV_summary = function(sim, eventTime, eventType) {
+doEvent.NRV_summary <- function(sim, eventTime, eventType) {
   switch(
     eventType,
     init = {
