@@ -61,3 +61,10 @@ test_that("parameters are the expected names", {
   )
 })
 
+
+test_that("reqdPkgs floors the packages that a library with an older build would otherwise keep", {
+  md <- SpaDES.core::moduleMetadata(module = moduleName, path = modulePath)
+  pkgs <- unlist(md$reqdPkgs)
+  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0\\)$", pkgs))) ## nationalReportingLayers()
+  expect_true(any(grepl("^FOR-CAST/spatialutils@main \\(>= 0\\.0\\.2\\)$", pkgs)))
+})
