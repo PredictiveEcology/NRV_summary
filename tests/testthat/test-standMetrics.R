@@ -301,6 +301,9 @@ test_that("by default the stand-level outputs are those of the base module: no n
                                "lead_Pice_mar"))
   cmp <- utils::read.csv(file.path(csv, "ELF", "st_nrvComparison.csv"))
   expect_false("sofIndicator" %in% names(cmp))
+  ## readers take the lead-nowhere rule from the file, never re-apply it
+  expect_type(cmp$tested, "logical")
+  expect_identical(cmp$tested, !(grepl("^lead_", cmp$metric) & cmp$current == 0 & cmp$hi == 0))
   figs <- list.files(file.path(out, "postprocess", "figures", "st", "ELF"))
   expect_false("stand_disturbance.png" %in% figs)
   expect_true("stand_age.png" %in% figs)
