@@ -157,6 +157,23 @@ defineModule(sim, list(
     defineParameter("nationalReportingLayersPath", "character", NA_character_, NA, NA,
                     paste("where the national layers are downloaded (once, and shared by every run that",
                           "points here); `NA` is `inputPath(sim)`.")),
+    defineParameter("fragmentationAgeThreshold", "numeric", 20, 0, NA,
+                    paste("(mode = 'multi') with `landscapeMap = \"forest\"`: stands whose stand age (years, the",
+                          "stand-age maps of the stand outputs) is below this are non-forest, with the pixels that",
+                          "have no cohorts. Forest is every other pixel of the reporting area.")),
+    defineParameter("landscapeMap", "character", "vegType", NA, NA,
+                    paste("(mode = 'multi') the map the 'lm' event's metrics are computed on: 'vegType' (the",
+                          "vegetation-type maps) or 'forest' (forest / non-forest maps made from the saved stand-age",
+                          "maps, non-forest being a stand age below `fragmentationAgeThreshold` or no cohorts; the current",
+                          "condition's urban pixels are left out as for 'vegType'). On 'forest' only the forest class",
+                          "(class 1) is reported, as a landscape metric named `forest_<metric>`: with",
+                          "`landscapeMetricFuns = \"lsm_c_ed\"`, `forest_ed`, 'Forest edge density (m/ha)'. Its rows are",
+                          "those of any other landscape metric in `lm_nrvComparison.csv`, the inside counts and the",
+                          "figures.")),
+    defineParameter("landscapeMetricFuns", "character", unlist(nrvtools::default_landscape_metrics()), NA, NA,
+                    paste("(mode = 'multi') the metrics of the 'lm' event: the `landscapemetrics` function names",
+                          "passed as `funList` to `nrvtools::nrv_metrics_landscape()`. The default is",
+                          "`nrvtools::default_landscape_metrics()`.")),
     defineParameter("nrvWindow", "numeric", 0.3, 0, 1,
                     paste("the NRV is the last fraction of `summaryPeriod` (0.3 = the last 30%; in a 1000-year",
                           "run, years 700-1000). Must be above 0 and at most 1. The NRV range and the current",
@@ -492,6 +509,7 @@ InitMulti <- function(sim) {
   ## pre-industrial landscape, the marker is today's, and that difference IS the land-conversion
   ## component of the departure.
   fvtm0src <- mod$fvtm0 ## the species-level year-0 map, before the urban mask (see below)
+  fsam0src <- mod$fsam0 ## and the year-0 stand-age map
   urbanMask <- NULL
   ccrep <- sim$LandTypeCC_reporting
   if (is.null(ccrep)) {
@@ -575,6 +593,21 @@ InitMulti <- function(sim) {
   ## cohortData and pixelGroupMap files
   mod$cd <- grep("cohortData", cdpgm, value = TRUE)
   mod$pgm <- grep("pixelGroupMap", cdpgm, value = TRUE)
+
+  ## landscapeMap = "forest": the 'lm' event reads forest / non-forest maps, built from the
+  ## stand-age maps the stand outputs read (mod$sam, and year 0's, before the urban mask). Year 0 is the
+  ## current condition, with the urban pixels left out as for the vegetation-type map above.
+  if (.landscapeMap(sim) == "forest" && "lm" %in% tolower(P(sim)$postprocessEvents)) {
+    ff <- .buildForestMaps(c(fsam0src, mod$sam), file.path(.ppRoot(sim), "_forestMaps"),
+                           P(sim)$fragmentationAgeThreshold, sim$studyAreaReporting)
+    mod$fnf <- ff[-1L]
+    mod$fnf0 <- if (is.null(urbanMask)) {
+      ff[[1L]]
+    } else {
+      .maskCC(ff[[1L]], urbanMask, file.path(.ppRoot(sim), "_forestMaps", "_cc"))
+    }
+    mod$ppFiles <- c(mod$ppFiles, ff, mod$fnf0)
+  }
 
   ## Reporting groups: the lm/lw/pm analyses read maps of the groups rather than of the simulated
   ## species, rebuilt from the saved cohorts (see .buildReportingVegTypeMaps()). Only the maps they
@@ -747,6 +780,27 @@ InitMulti <- function(sim) {
                               vegLeadingProportion, mixedType)
     dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
     terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## a few classes; keeps the colour table
+  }
+  out
+}
+
+## Forest / non-forest maps (`<outRoot>/<rep>/forestMap_year<YYYY>.tif`, the `<rep>/<prefix>_year<YYYY>`
+## tail nrvtools labels its results from; 1 forest, 0 non-forest) from the stand-age maps `sam`
+## (`<rep>/standAgeMap_year<YYYY>.tif`: the biomass-weighted ages of LandR::standAgeMapGenerator() that the
+## stand outputs use, and for the current condition the `ccStandAgeSource` choice). Non-forest is an age
+## below `ageThreshold`, or no age (no cohorts) inside `studyArea`; outside it is NA. `outRoot` is cleared
+## first. Returns the new paths in the order of `sam`.
+.buildForestMaps <- function(sam, outRoot, ageThreshold, studyArea) {
+  stopifnot(all(grepl("^standAgeMap_year[0-9]+\\.tif$", basename(sam))))
+  out <- file.path(outRoot, basename(dirname(sam)), sub("^standAgeMap", "forestMap", basename(sam)))
+  unlink(outRoot, recursive = TRUE)
+  area <- terra::vect(sf::st_as_sf(studyArea))
+  for (i in seq_along(sam)) {
+    age <- terra::rast(sam[i])
+    inside <- terra::rasterize(terra::project(area, age), age, field = 1)
+    m <- terra::mask(terra::ifel(is.na(age), 0, age >= ageThreshold), inside)
+    dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
+    terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE)
   }
   out
 }
@@ -1065,13 +1119,49 @@ InitMulti <- function(sim) {
   invisible()
 }
 
-## build landscape metric envelopes from vegetation type maps (VTMs)
+## The map of the 'lm' event: `landscapeMap`, one of its two values.
+.landscapeMap <- function(sim) match.arg(P(sim)$landscapeMap, c("vegType", "forest"))
+
+## The forest class (1) of the metrics computed on a forest / non-forest map, as landscape metrics named
+## `forest_<metric>` (`forest_ed`, forest edge density): the class-1 rows of each metric of `raw`, a list of
+## nrvtools::nrv_metrics_landscape()'s tables. Non-forest is the rest, and has no metric of its own.
+## landscapemetrics returns no class-1 row for a map x polygon without forest, so a polygon that has cells but
+## no forest gets 0 for the metrics that are 0 without the class (`.zeroWithoutClass`); a missing row would
+## drop its test from lm_nrvComparison.csv and the inside counts. A polygon with no cells has no rows at all.
+.forestClassRows <- function(raw) {
+  key <- c("rep", "time", "poly")
+  lapply(raw, function(d) {
+    forest <- d[d$class %in% 1, , drop = FALSE]
+    if (nrow(d) && d$metric[1L] %in% .zeroWithoutClass) {
+      cells <- unique(d[, key, drop = FALSE])
+      none <- cells[!do.call(paste, cells) %in% do.call(paste, forest[, key, drop = FALSE]), , drop = FALSE]
+      if (nrow(none)) {
+        zero <- cbind(d[rep(1L, nrow(none)), setdiff(names(d), c(key, "value")), drop = FALSE],
+                      value = 0, none)
+        forest <- rbind(forest, zero[, names(d), drop = FALSE])
+      }
+    }
+    forest$level <- rep("landscape", nrow(forest))
+    forest$class <- rep(NA_integer_, nrow(forest))
+    forest$id <- rep(NA_integer_, nrow(forest))
+    forest$metric <- rep_len(paste0("forest_", forest$metric), nrow(forest)) ## paste0() of nothing is "forest_"
+    forest
+  })
+}
+
+## the class metrics that are 0 for a class absent from a map (edge density, class area, edge length)
+.zeroWithoutClass <- c("ed", "ca", "te")
+
+## build landscape metric envelopes from vegetation type maps (VTMs), or `landscapeMap = "forest"`
+## forest / non-forest maps
 landscapeMetrics <- function(sim) {
-  fvtm0 <- mod$fvtm0 ## current-conditions VTM = the saved year-0 state (see InitMulti)
-  fvtm <- mod$vtm
+  forest <- .landscapeMap(sim) == "forest"
+  ## current-conditions map = the saved year-0 state (see InitMulti)
+  fvtm0 <- if (forest) mod$fnf0 else mod$fvtm0
+  fvtm <- if (forest) mod$fnf else mod$vtm
   studyAreaReporting <- sf::st_as_sf(sim$studyAreaReporting)
 
-  funList <- default_landscape_metrics() ## TODO: pass this further up via parameter funList_lm
+  funList <- P(sim)$landscapeMetricFuns
 
   oldPlan <- .planWithWorkers(pemisc::optimalClusterNum(5000, length(fvtm)))
   on.exit(future::plan(oldPlan), add = TRUE)
@@ -1106,7 +1196,7 @@ landscapeMetrics <- function(sim) {
 
       ## raw per-replicate landscape metrics, Cached on the map file(s) it reads.
       lmRaw <- function(vtm) {
-        Cache(
+        raw <- Cache(
           nrv_metrics_landscape,
           summaryPolys = rptPoly,
           polyCol = rptPolyCol,
@@ -1114,6 +1204,7 @@ landscapeMetrics <- function(sim) {
           funList = funList,
           .cacheExtra = file.info(vtm)[, c("size", "mtime")]
         )
+        if (forest) .forestClassRows(raw) else raw
       }
 
       ## current conditions: a single snapshot, summarised as one replicate.
@@ -1755,7 +1846,8 @@ makeAnimation <- function(sim) {
 ## The y title of a figure of metric `met`: its plain name and unit (nrvtools::nrv_metric_info()),
 ## for a patch-level metric with how a replicate's value comes from its patches.
 .metricTitle <- function(met, level) {
-  lab <- nrvtools::nrv_metric_info(met, level)$label
+  info <- nrvtools::nrv_metric_info(met, level)
+  lab <- if (is.na(info$name) && met %in% names(.metricNames)) .metricNames[[met]] else info$label ## e.g. forest_ed
   if (identical(level, "patch")) paste0(lab, ", mean over patches") else lab
 }
 
@@ -2215,7 +2307,7 @@ plotFun <- function(sim) {
   ai = "Aggregation index", area = "Patch area", area_cv = "Patch area CV", area_mn = "Mean patch area",
   area_sd = "Patch area SD", ca = "Class area", cohesion = "Patch cohesion index",
   condent = "Conditional entropy", core_cv = "Core area CV", core_mn = "Mean core area",
-  core_sd = "Core area SD", ed = "Edge density", enn = "Euclidean nearest-neighbour distance",
+  core_sd = "Core area SD", ed = "Edge density", forest_ed = "Forest edge density (m/ha)", enn = "Euclidean nearest-neighbour distance",
   enn_cv = "Nearest-neighbour distance CV", enn_mn = "Mean nearest-neighbour distance",
   enn_sd = "Nearest-neighbour distance SD", iji = "Interspersion-juxtaposition index",
   sam_mdn = "Median stand age", ## patchAges(): the median stand age of each patch

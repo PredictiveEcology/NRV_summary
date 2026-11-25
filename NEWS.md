@@ -2,6 +2,8 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- The `lm` event's metrics and map are parameters. `landscapeMetricFuns` (default `nrvtools::default_landscape_metrics()`, unchanged) is the `funList` of `nrvtools::nrv_metrics_landscape()`; `landscapeMap` is `"vegType"` (default, the vegetation-type maps) or `"forest"`, forest / non-forest maps made here from the saved stand-age maps of each summary year and of the current condition (the ages the stand outputs use): non-forest is a stand age below `fragmentationAgeThreshold` (new, default 20 years), or a pixel without cohorts; everything else in the reporting area is forest. On `"forest"` only the forest class is reported; with `landscapeMetricFuns = "lsm_c_ed"` that is forest edge density, in `lm_nrvComparison.csv` (with `tested`), `nrvInside.csv` and the figures, labelled "Forest edge density (m/ha)".
+
 - `reqdPkgs` floor: LandWebUtils (>= 1.1.0), the first with `nationalReportingLayers()` (a library with an older LandWebUtils kept it, since the branch pin does not update an installed package). It also brings in spatialutils (>= 0.0.2), which LandWebUtils requires.
 
 - `csv/all/nrvInside.csv` has one row per polygon and analysis `group` (`landscape`, `stand`): a new `group` column, with `nTests`, `nInside` and `pctInside` of that group's tested rows. Sum `nTests` and `nInside` over the groups for the pooled count as before.
