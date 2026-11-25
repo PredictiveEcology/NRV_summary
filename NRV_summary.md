@@ -1,7 +1,7 @@
 ---
 title: "NRV_summary Manual"
 subtitle: "v.2.0.0.9024"
-date: "Last updated: 2026-11-04"
+date: "Last updated: 2026-11-25"
 output:
   bookdown::html_document2:
     toc: true
