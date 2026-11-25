@@ -41,7 +41,6 @@ defineModule(sim, list(
     "FOR-CAST/nrvtools@development (>= 0.3.4.9003)",
     "FOR-CAST/fireregimetools@main (>= 0.1.0.9008)", ## fetch_nbac_polys(), as burnSummaries
     "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
-    "FOR-CAST/spatialutils@main (>= 0.0.2)", ## the filtered national-layer reads of nationalReportingLayers()
     "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9057)" ## dirnamesFromSet() (bare-number replicate folders), resolveSimYears(), padYears()
   ),
   parameters = bindrows(

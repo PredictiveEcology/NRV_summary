@@ -2,7 +2,7 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
-- `reqdPkgs` floors: LandWebUtils (>= 1.1.0), the first with `nationalReportingLayers()` (a library with an older LandWebUtils kept it, since the branch pin does not update an installed package), and spatialutils (>= 0.0.2), for the filtered national-layer reads.
+- `reqdPkgs` floor: LandWebUtils (>= 1.1.0), the first with `nationalReportingLayers()` (a library with an older LandWebUtils kept it, since the branch pin does not update an installed package). It also brings in spatialutils (>= 0.0.2), which LandWebUtils requires.
 
 - `csv/all/nrvInside.csv` has one row per polygon and analysis `group` (`landscape`, `stand`): a new `group` column, with `nTests`, `nInside` and `pctInside` of that group's tested rows. Sum `nTests` and `nInside` over the groups for the pooled count as before.
 
