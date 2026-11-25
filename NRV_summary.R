@@ -2341,15 +2341,16 @@ plotFun <- function(sim) {
 ## and in the NRV (it leads nowhere) is not. The one definition of the rule, for the figure, nrvInside.csv and readers.
 .nrvTested <- function(cmp) !(grepl("^lead_", cmp$metric) & cmp$current == 0 & cmp$hi == 0)
 
-## Per polygon, the tests (`tested` rows of every group) of `cmp` (poly, position, tested) and how many fall inside the
-## NRV range: poly, nTests, nInside, pctInside (100 * nInside / nTests).
+## Per polygon and analysis group, the tests (`tested` rows) of `cmp` (poly, group, position, tested) and how many fall
+## inside the NRV range: poly, group, nTests, nInside, pctInside (100 * nInside / nTests). Sum nTests and nInside over
+## the groups for a polygon's pooled count.
 .nrvInside <- function(cmp) {
   cmp <- cmp[cmp$tested, , drop = FALSE]
-  polys <- unique(cmp$poly)
-  out <- data.frame(poly = polys,
-                    nTests = vapply(polys, function(p) sum(cmp$poly == p), integer(1), USE.NAMES = FALSE),
-                    nInside = vapply(polys, function(p) sum(cmp$poly == p & cmp$position == "inside"), integer(1),
-                                     USE.NAMES = FALSE))
+  key <- unique(cmp[c("poly", "group")])
+  n <- function(f) vapply(seq_len(nrow(key)), function(i) sum(f(cmp) & cmp$poly == key$poly[i] & cmp$group == key$group[i]),
+                          integer(1))
+  out <- data.frame(poly = key$poly, group = key$group, nTests = n(function(d) rep(TRUE, nrow(d))),
+                    nInside = n(function(d) d$position == "inside"))
   out$pctInside <- 100 * out$nInside / out$nTests
   out
 }

@@ -134,27 +134,34 @@ test_that("the stand-level order is biomass, age classes young to old, forested,
   expect_identical(m[order(o)], c("biomassTg", "age_Young", "age_Mature", "age_Old", "forested", "lead_A", "lead_B"))
 })
 
-test_that("nrvInside counts the tests of every group inside the NRV range, per polygon", {
+test_that("nrvInside counts the tests inside the NRV range, per polygon and group", {
   cmp <- data.frame(
-    poly = rep(c("E1", "E2"), c(5, 3)), group = "stand",
-    metric = c("ai", "age_Old", "lead_A", "lead_Zero", "forested", "ai", "lead_Zero", "lead_A"),
-    position = c("inside", "above", "inside", "inside", "below", "inside", "inside", "inside"),
-    tested = c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, TRUE))
+    poly = rep(c("E1", "E2"), c(7, 3)),
+    group = c("landscape", "landscape", rep("stand", 5), "landscape", "stand", "stand"),
+    metric = c("ai", "np", "ai", "age_Old", "lead_A", "lead_Zero", "forested", "ai", "lead_Zero", "lead_A"),
+    position = c("below", "inside", "inside", "above", "inside", "inside", "below", "inside", "inside", "inside"),
+    tested = c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, TRUE))
   r <- .nrvInside(cmp)
-  expect_identical(names(r), c("poly", "nTests", "nInside", "pctInside"))
-  expect_identical(r$poly, c("E1", "E2"))
-  expect_identical(r$nTests, c(4L, 2L))
-  expect_identical(r$nInside, c(2L, 2L))
-  expect_equal(r$pctInside, c(50, 100))
+  expect_identical(names(r), c("poly", "group", "nTests", "nInside", "pctInside"))
+  expect_identical(r$poly, c("E1", "E1", "E2", "E2"))
+  expect_identical(r$group, c("landscape", "stand", "landscape", "stand"))
+  expect_identical(r$nTests, c(2L, 4L, 1L, 1L))
+  expect_identical(r$nInside, c(1L, 2L, 1L, 1L))
+  expect_equal(r$pctInside, c(50, 50, 100, 100))
+  ## summed over the groups: the polygon's pooled count
+  pooled <- stats::aggregate(cbind(nTests, nInside) ~ poly, r, sum)
+  expect_identical(pooled$nTests, c(6L, 2L))
+  expect_identical(pooled$nInside, c(3L, 2L))
 })
 
-test_that("nrvInside.csv is written with one row per polygon", {
-  cmp <- data.frame(poly = c("E1", "E1", "E2"), position = c("inside", "below", "inside"), tested = TRUE)
+test_that("nrvInside.csv is written with one row per polygon and group", {
+  cmp <- data.frame(poly = c("E1", "E1", "E2"), group = c("landscape", "stand", "stand"),
+                    position = c("inside", "below", "inside"), tested = TRUE)
   f <- .writeNrvInside(cmp, withr::local_tempdir())
   expect_identical(basename(f), "nrvInside.csv")
   d <- utils::read.csv(f)
-  expect_identical(names(d), c("poly", "nTests", "nInside", "pctInside"))
-  expect_equal(d$pctInside, c(50, 100))
+  expect_identical(names(d), c("poly", "group", "nTests", "nInside", "pctInside"))
+  expect_equal(d$pctInside, c(100, 0, 100))
 })
 
 test_that("a snapshot's big-treed old, young and recently burned shares", {
