@@ -7,7 +7,7 @@ defineModule(sim, list(
     person(c("Alex", "M."), "Chubaty", email = "achubaty@for-cast.ca", role = c("aut"))
   ),
   childModules = character(0),
-  version = list(NRV_summary = "2.0.0.9043"),
+  version = list(NRV_summary = "2.0.0.9044"),
   timeframe = as.POSIXlt(c(NA, NA)),
   timeunit = "year",
   citation = list("citation.bib"),
@@ -18,7 +18,7 @@ defineModule(sim, list(
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
     "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9054)", ## leadingSpeciesProp(), leadingByPixelGroup()
-    "PredictiveEcology/LandWebUtils@development (>= 1.0.3.9059)", ## sppEquiv_groups(), recode_cohorts(), nationalReportingLayers()
+    "PredictiveEcology/LandWebUtils@development (>= 1.1.0)", ## sppEquiv_groups(), recode_cohorts(); nationalReportingLayers() exists from 1.1.0
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
     ## calculatePatchMetrics()/calculatePatchMetricsSeral()/nrv_metrics_landscape() on those with
@@ -38,9 +38,9 @@ defineModule(sim, list(
     ## 0.3.4.9001, not 0.3.4.9000: summarize_nrv() takes the per-replicate values that the patch
     ## metric envelopes are built from and returns exact quartiles; nrv_metric_info() names the
     ## axes; the plot functions take captions.
-    ## 0.5.0.9001, not 0.3.4.9003: forest_nonforest_map() and nrv_forest_edge_density() (the
-    ## `landscapeMetrics = "fragmentation"` metric), and its name in nrv_metric_info().
-    "FOR-CAST/nrvtools@development (>= 0.5.0.9001)",
+    ## 0.5.1.9001: forest_nonforest_map() (`landscapeMap = "forest"`) and its edge density's name in
+    ## nrv_metric_info().
+    "FOR-CAST/nrvtools@development (>= 0.5.1.9001)",
     "FOR-CAST/fireregimetools@main (>= 0.1.0.9008)", ## fetch_nbac_polys(), as burnSummaries
     "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
     "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9057)" ## dirnamesFromSet() (bare-number replicate folders), resolveSimYears(), padYears()
@@ -160,17 +160,22 @@ defineModule(sim, list(
                     paste("where the national layers are downloaded (once, and shared by every run that",
                           "points here); `NA` is `inputPath(sim)`.")),
     defineParameter("fragmentationAgeThreshold", "numeric", 20, 0, NA,
-                    paste("(mode = 'multi') with `landscapeMetrics = \"fragmentation\"`: stands whose",
-                          "stand age (years, the stand-age maps of the stand outputs) is below this are non-forest, with",
-                          "the pixels that have no cohorts. Forest is every other pixel of the reporting area.")),
-    defineParameter("landscapeMetrics", "character", "default", NA, NA,
-                    paste("(mode = 'multi') the metrics of the 'lm' event: 'default' (nrvtools'",
-                          "`default_landscape_metrics()`, on the vegetation-type maps) or 'fragmentation' (one",
-                          "metric, forest edge density in m/ha, `nrvtools::nrv_forest_edge_density()`, on forest /",
-                          "non-forest maps made from the saved stand-age maps by",
-                          "`nrvtools::forest_nonforest_map()` with `fragmentationAgeThreshold`; the current",
-                          "condition's urban pixels are left out as for 'default'). Its rows are those of any",
-                          "other landscape metric in `lm_nrvComparison.csv`, the inside counts and the figures.")),
+                    paste("(mode = 'multi') with `landscapeMap = \"forest\"`: stands whose stand age (years, the",
+                          "stand-age maps of the stand outputs) is below this are non-forest, with the pixels that",
+                          "have no cohorts. Forest is every other pixel of the reporting area.")),
+    defineParameter("landscapeMap", "character", "vegType", NA, NA,
+                    paste("(mode = 'multi') the map the 'lm' event's metrics are computed on: 'vegType' (the",
+                          "vegetation-type maps) or 'forest' (forest / non-forest maps made from the saved stand-age",
+                          "maps by `nrvtools::forest_nonforest_map()` with `fragmentationAgeThreshold`; the current",
+                          "condition's urban pixels are left out as for 'vegType'). On 'forest' only the forest class",
+                          "(class 1) is reported, as a landscape metric named `forest_<metric>`: with",
+                          "`landscapeMetricFuns = \"lsm_c_ed\"`, `forest_ed`, 'Forest edge density (m/ha)'. Its rows are",
+                          "those of any other landscape metric in `lm_nrvComparison.csv`, the inside counts and the",
+                          "figures.")),
+    defineParameter("landscapeMetricFuns", "character", unlist(nrvtools::default_landscape_metrics()), NA, NA,
+                    paste("(mode = 'multi') the metrics of the 'lm' event: the `landscapemetrics` function names",
+                          "passed as `funList` to `nrvtools::nrv_metrics_landscape()`. The default is",
+                          "`nrvtools::default_landscape_metrics()`.")),
     defineParameter("nrvWindow", "numeric", 0.3, 0, 1,
                     paste("the NRV is the last fraction of `summaryPeriod` (0.3 = the last 30%; in a 1000-year",
                           "run, years 700-1000). Must be above 0 and at most 1. The NRV range and the current",
@@ -330,7 +335,6 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
         options(NRV_summary.reuseAggregates = isTRUE(P(sim)$reuseAggregates))
 
         .checkPostprocessEvents(P(sim)$postprocessEvents)
-        .checkLandscapeMetrics(P(sim)$landscapeMetrics)
         sim <- InitMulti(sim)
 
         if ("am" %in% tolower(P(sim)$postprocessEvents)) {
@@ -592,10 +596,10 @@ InitMulti <- function(sim) {
   mod$cd <- grep("cohortData", cdpgm, value = TRUE)
   mod$pgm <- grep("pixelGroupMap", cdpgm, value = TRUE)
 
-  ## landscapeMetrics = "fragmentation": the 'lm' event reads forest / non-forest maps, built from the
+  ## landscapeMap = "forest": the 'lm' event reads forest / non-forest maps, built from the
   ## stand-age maps the stand outputs read (mod$sam, and year 0's, before the urban mask). Year 0 is the
   ## current condition, with the urban pixels left out as for the vegetation-type map above.
-  if (identical(P(sim)$landscapeMetrics, "fragmentation") && "lm" %in% tolower(P(sim)$postprocessEvents)) {
+  if (.landscapeMap(sim) == "forest" && "lm" %in% tolower(P(sim)$postprocessEvents)) {
     ff <- .buildForestMaps(c(fsam0src, mod$sam), file.path(.ppRoot(sim), "_forestMaps"),
                            P(sim)$fragmentationAgeThreshold, sim$studyAreaReporting)
     mod$fnf <- ff[-1L]
@@ -837,14 +841,6 @@ InitMulti <- function(sim) {
     )
   }
   invisible(events)
-}
-
-## `landscapeMetrics` is one of the two sets the 'lm' event knows; anything else would run the default one.
-.checkLandscapeMetrics <- function(x) {
-  if (!identical(x, "default") && !identical(x, "fragmentation")) {
-    stop("landscapeMetrics must be 'default' or 'fragmentation', not ", deparse(x), ".", call. = FALSE)
-  }
-  invisible(x)
 }
 
 .ppRoot <- function(sim) {
@@ -1122,15 +1118,33 @@ InitMulti <- function(sim) {
   invisible()
 }
 
-## build landscape metric envelopes from vegetation type maps (VTMs)
+## The map of the 'lm' event: `landscapeMap`, one of its two values.
+.landscapeMap <- function(sim) match.arg(P(sim)$landscapeMap, c("vegType", "forest"))
+
+## The forest class (1) of the metrics computed on a forest / non-forest map, as landscape metrics named
+## `forest_<metric>` (`forest_ed`, forest edge density): the class-1 rows of each metric of `raw`, a list of
+## nrvtools::nrv_metrics_landscape()'s tables. Non-forest is the rest, and has no metric of its own.
+.forestClassRows <- function(raw) {
+  lapply(raw, function(d) {
+    d <- d[d$class %in% 1, , drop = FALSE]
+    d$level <- rep("landscape", nrow(d))
+    d$class <- rep(NA_integer_, nrow(d))
+    d$id <- rep(NA_integer_, nrow(d))
+    d$metric <- paste0("forest_", d$metric)
+    d
+  })
+}
+
+## build landscape metric envelopes from vegetation type maps (VTMs), or `landscapeMap = "forest"`
+## forest / non-forest maps
 landscapeMetrics <- function(sim) {
-  fragmentation <- identical(P(sim)$landscapeMetrics, "fragmentation")
+  forest <- .landscapeMap(sim) == "forest"
   ## current-conditions map = the saved year-0 state (see InitMulti)
-  fvtm0 <- if (fragmentation) mod$fnf0 else mod$fvtm0
-  fvtm <- if (fragmentation) mod$fnf else mod$vtm
+  fvtm0 <- if (forest) mod$fnf0 else mod$fvtm0
+  fvtm <- if (forest) mod$fnf else mod$vtm
   studyAreaReporting <- sf::st_as_sf(sim$studyAreaReporting)
 
-  funList <- default_landscape_metrics() ## TODO: pass this further up via parameter funList_lm
+  funList <- P(sim)$landscapeMetricFuns
 
   oldPlan <- .planWithWorkers(pemisc::optimalClusterNum(5000, length(fvtm)))
   on.exit(future::plan(oldPlan), add = TRUE)
@@ -1165,16 +1179,7 @@ landscapeMetrics <- function(sim) {
 
       ## raw per-replicate landscape metrics, Cached on the map file(s) it reads.
       lmRaw <- function(vtm) {
-        if (fragmentation) {
-          return(Cache(
-            nrvtools::nrv_forest_edge_density,
-            fnf = vtm,
-            summaryPolys = rptPoly,
-            polyCol = rptPolyCol,
-            .cacheExtra = file.info(vtm)[, c("size", "mtime")]
-          ))
-        }
-        Cache(
+        raw <- Cache(
           nrv_metrics_landscape,
           summaryPolys = rptPoly,
           polyCol = rptPolyCol,
@@ -1182,6 +1187,7 @@ landscapeMetrics <- function(sim) {
           funList = funList,
           .cacheExtra = file.info(vtm)[, c("size", "mtime")]
         )
+        if (forest) .forestClassRows(raw) else raw
       }
 
       ## current conditions: a single snapshot, summarised as one replicate.

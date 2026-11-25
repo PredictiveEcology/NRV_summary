@@ -1,5 +1,5 @@
-## landscapeMetrics = "fragmentation" (2.0.0.9044): the 'lm' event reports one metric, forest edge density,
-## from forest / non-forest maps built from the saved stand-age maps; its rows travel the path of every other
+## landscapeMap = "forest" with landscapeMetricFuns = "lsm_c_ed" (2.0.0.9044): the 'lm' event reports forest
+## edge density, from forest / non-forest maps built from the saved stand-age maps; its rows travel the path of every other
 ## landscape metric (envelope, lm_nrvComparison.csv, figures).
 
 ## a 4 x 4 map of 10 m cells: left half old stand (100 years), right half `right` years: with 10, one 40 m edge
@@ -42,13 +42,16 @@ fragSim <- function(root, ...) {
 }
 fragInit <- function(sim) suppressWarnings(SpaDES.core::spades(sim, events = list(NRV_summary = "init"), debug = FALSE))
 
-test_that("landscapeMetrics defaults to the ten metrics, and only the two sets are accepted", {
+test_that("the lm event defaults to the vegetation-type maps and the ten default metrics", {
   p <- SpaDES.core::moduleMetadata(module = moduleName, path = modulePath)$parameters
-  expect_identical(p$default[[which(p$paramName == "landscapeMetrics")]], "default")
+  expect_identical(p$default[[which(p$paramName == "landscapeMap")]], "vegType")
+  expect_identical(p$default[[which(p$paramName == "landscapeMetricFuns")]],
+                   unlist(nrvtools::default_landscape_metrics()))
   expect_identical(p$default[[which(p$paramName == "fragmentationAgeThreshold")]], 20)
-  check <- moduleFn(".checkLandscapeMetrics", new.env())
-  expect_identical(check("fragmentation"), "fragmentation")
-  expect_error(check("fragmetation"), "landscapeMetrics must be 'default' or 'fragmentation'")
+  testthat::local_mocked_bindings(P = function(sim, ...) sim) ## `sim` stands for the parameter list
+  landscapeMap <- moduleFn(".landscapeMap", new.env())
+  expect_identical(landscapeMap(list(landscapeMap = "forest")), "forest")
+  expect_error(landscapeMap(list(landscapeMap = "wood")), "should be one of")
 })
 
 test_that("the forest maps keep the <rep>/<prefix>_year<YYYY>.tif path nrvtools parses", {
@@ -70,7 +73,7 @@ test_that("with landscapeMetrics = 'fragmentation' the lm event writes forest ed
   withr::local_package("SpaDES.core")
   withr::local_options(reproducible.useCache = TRUE)
   root <- withr::local_tempdir()
-  sim <- fragInit(fragSim(root, landscapeMetrics = "fragmentation"))
+  sim <- fragInit(fragSim(root, landscapeMap = "forest", landscapeMetricFuns = "lsm_c_ed"))
   mod <- sim@.xData$.modObjs[[moduleName]]
   expect_identical(basename(mod$fnf0), "forestMap_year2020.tif")
   expect_identical(basename(mod$fnf), sprintf("forestMap_year%04d.tif", c(2720, 2820)))
@@ -92,7 +95,7 @@ test_that("with landscapeMetrics = 'fragmentation' the lm event writes forest ed
 
   cmp <- utils::read.csv(file.path(dirname(SpaDES.core::outputPath(sim)), "postprocess", "csv", "lm", "ELF",
                                    "lm_nrvComparison.csv"))
-  expect_identical(cmp$metric, "forest_ed")
+  expect_identical(cmp$metric, "forest_ed") ## the forest class of lsm_c_ed
   expect_equal(cmp$current, 0) ## today: all forest, no edge
   expect_equal(cmp$mid, 250) ## the simulated years: one 40 m edge over 0.16 ha
   expect_identical(cmp$position, "below") ## today is below the simulated range

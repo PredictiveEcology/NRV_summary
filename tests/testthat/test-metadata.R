@@ -51,7 +51,7 @@ test_that("parameters are the expected names", {
     c(
       ".plotInitialTime", ".plotInterval", ".plots", ".seed", ".studyAreaName", ".useCache",
       "ageClassCutOffs", "ageClasses", "ageClassMaxAge", "autocorrMaxLag", "bigTreedQuantile", "ccStandAgeSource",
-      "fragmentationAgeThreshold", "landscapeMetrics", "mixedType", "mode", "nationalReportingLayers", "nationalReportingLayersPath", "nrvWindow", "patchDirections",
+      "fragmentationAgeThreshold", "landscapeMap", "landscapeMetricFuns", "mixedType", "mode", "nationalReportingLayers", "nationalReportingLayersPath", "nrvWindow", "patchDirections",
       "plotWorkers", "postprocessEvents", "recentFireYears",
       "recordAnnualSeries", "reps", "reuseAggregates", "sieveThresh", "simTimes",
       "sofIndicators", "sppEquivCol", "sppEquivColReporting", "stabilityAlpha", "stabilityMinChange",
@@ -61,3 +61,9 @@ test_that("parameters are the expected names", {
   )
 })
 
+
+test_that("reqdPkgs floors LandWebUtils, which an older build in a library would otherwise keep", {
+  md <- SpaDES.core::moduleMetadata(module = moduleName, path = modulePath)
+  pkgs <- unlist(md$reqdPkgs)
+  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0\\)$", pkgs))) ## nationalReportingLayers()
+})
