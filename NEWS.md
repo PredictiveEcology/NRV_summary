@@ -2,6 +2,8 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- `csv/all/nrvInside.csv` has one row per polygon and analysis `group` (`landscape`, `stand`): a new `group` column, with `nTests`, `nInside` and `pctInside` of that group's tested rows. Sum `nTests` and `nInside` over the groups for the pooled count as before.
+
 - `nationalReportingLayers` may name `Intact2000`, the intact forest of 2000 (also `SoF-2 primary forest`). With `sofIndicators = TRUE` and an `Intact` layer, `csv/sof/Intact/intact_extent.csv` gives the intact area of each year in the reporting area, its share of it, and the loss since the earliest year: land no longer intact, fragmentation included, not only forest cover lost. Requires LandWebUtils 1.0.3.9059. Version 2.0.0.9042.
 
 - `nationalReportingLayers` may name `Intact`, LandWebUtils' 2025 Intact Forest Landscapes, whose rows are labelled `SoF-2 primary forest`. Requires LandWebUtils 1.0.3.9057. Version 2.0.0.9041.
