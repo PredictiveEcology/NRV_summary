@@ -38,7 +38,9 @@ defineModule(sim, list(
     ## 0.3.4.9001, not 0.3.4.9000: summarize_nrv() takes the per-replicate values that the patch
     ## metric envelopes are built from and returns exact quartiles; nrv_metric_info() names the
     ## axes; the plot functions take captions.
-    "FOR-CAST/nrvtools@development (>= 0.3.4.9003)",
+    ## 0.5.0.9001, not 0.3.4.9003: forest_nonforest_map() and nrv_forest_edge_density() (the
+    ## `landscapeMetrics = "fragmentation"` metric), and its name in nrv_metric_info().
+    "FOR-CAST/nrvtools@development (>= 0.5.0.9001)",
     "FOR-CAST/fireregimetools@main (>= 0.1.0.9008)", ## fetch_nbac_polys(), as burnSummaries
     "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
     "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9057)" ## dirnamesFromSet() (bare-number replicate folders), resolveSimYears(), padYears()
@@ -157,6 +159,18 @@ defineModule(sim, list(
     defineParameter("nationalReportingLayersPath", "character", NA_character_, NA, NA,
                     paste("where the national layers are downloaded (once, and shared by every run that",
                           "points here); `NA` is `inputPath(sim)`.")),
+    defineParameter("fragmentationAgeThreshold", "numeric", 20, 0, NA,
+                    paste("(mode = 'multi') with `landscapeMetrics = \"fragmentation\"`: stands whose",
+                          "biomass-weighted age (years) is below this are non-forest, with the pixels that have",
+                          "no cohorts. Forest is every other pixel of the reporting area.")),
+    defineParameter("landscapeMetrics", "character", "default", NA, NA,
+                    paste("(mode = 'multi') the metrics of the 'lm' event: 'default' (nrvtools'",
+                          "`default_landscape_metrics()`, on the vegetation-type maps) or 'fragmentation' (one",
+                          "metric, forest edge density in m/ha, `nrvtools::nrv_forest_edge_density()`, on forest /",
+                          "non-forest maps made from the saved `cohortData` and `pixelGroupMap` by",
+                          "`nrvtools::forest_nonforest_map()` with `fragmentationAgeThreshold`; the current",
+                          "condition's urban pixels are left out as for 'default'). Its rows are those of any",
+                          "other landscape metric in `lm_nrvComparison.csv`, the inside counts and the figures.")),
     defineParameter("nrvWindow", "numeric", 0.3, 0, 1,
                     paste("the NRV is the last fraction of `summaryPeriod` (0.3 = the last 30%; in a 1000-year",
                           "run, years 700-1000). Must be above 0 and at most 1. The NRV range and the current",
@@ -316,6 +330,7 @@ doEvent.NRV_summary = function(sim, eventTime, eventType) {
         options(NRV_summary.reuseAggregates = isTRUE(P(sim)$reuseAggregates))
 
         .checkPostprocessEvents(P(sim)$postprocessEvents)
+        .checkLandscapeMetrics(P(sim)$landscapeMetrics)
         sim <- InitMulti(sim)
 
         if ("am" %in% tolower(P(sim)$postprocessEvents)) {
@@ -576,6 +591,21 @@ InitMulti <- function(sim) {
   mod$cd <- grep("cohortData", cdpgm, value = TRUE)
   mod$pgm <- grep("pixelGroupMap", cdpgm, value = TRUE)
 
+  ## landscapeMetrics = "fragmentation": the 'lm' event reads forest / non-forest maps, built from the
+  ## cohorts beside the species-level maps, so before the reporting-group maps replace those paths. Year
+  ## 0 is the current condition, with the urban pixels left out as for the vegetation-type map above.
+  if (identical(P(sim)$landscapeMetrics, "fragmentation") && "lm" %in% tolower(P(sim)$postprocessEvents)) {
+    ff <- .buildForestMaps(c(fvtm0src, mod$vtm), file.path(.ppRoot(sim), "_forestMaps"),
+                           P(sim)$fragmentationAgeThreshold, sim$studyAreaReporting)
+    mod$fnf <- ff[-1L]
+    mod$fnf0 <- if (is.null(urbanMask)) {
+      ff[[1L]]
+    } else {
+      .maskCC(ff[[1L]], urbanMask, file.path(.ppRoot(sim), "_forestMaps", "_cc"))
+    }
+    mod$ppFiles <- c(mod$ppFiles, ff, mod$fnf0)
+  }
+
   ## Reporting groups: the lm/lw/pm analyses read maps of the groups rather than of the simulated
   ## species, rebuilt from the saved cohorts (see .buildReportingVegTypeMaps()). Only the maps they
   ## read change: time since fire (mod$tsf, mod$ftsf0) and stand age (mod$sam, mod$fsam0) stay those
@@ -732,21 +762,44 @@ InitMulti <- function(sim) {
 ## `<outRoot>/<rep>/vegTypeMap_year<YYYY>.tif`, keeping the `<rep>/<prefix>_year<YYYY>` tail nrvtools
 ## labels its results from; `outRoot` is cleared first. Returns the new paths in the order of `vtm`.
 .buildReportingVegTypeMaps <- function(vtm, outRoot, grp, colors, vegLeadingProportion, mixedType) {
+  files <- .cohortFilesOf(vtm, "build the reporting-group maps")
+  out <- file.path(outRoot, basename(dirname(vtm)), basename(vtm))
+  unlink(outRoot, recursive = TRUE)
+  for (i in seq_along(vtm)) {
+    m <- .reportingVegTypeMap(qs2::qs_read(files$cd[i]), terra::rast(files$pgm[i]), grp, colors,
+                              vegLeadingProportion, mixedType)
+    dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
+    terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## a few classes; keeps the colour table
+  }
+  out
+}
+
+## The `cohortData` and `pixelGroupMap` files saved beside each vegetation-type map `vtm`
+## (`<rep>/vegTypeMap_year<YYYY>.tif`), as list(cd, pgm); stops, naming `what`, if any is missing.
+.cohortFilesOf <- function(vtm, what) {
   stopifnot(all(grepl("^vegTypeMap_year[0-9]+\\.tif$", basename(vtm))))
   cd <- file.path(dirname(vtm), sub("^vegTypeMap(_year[0-9]+)\\.tif$", "cohortData\\1.qs2", basename(vtm)))
   pgm <- file.path(dirname(vtm), sub("^vegTypeMap", "pixelGroupMap", basename(vtm)))
   miss <- c(cd, pgm)[!file.exists(c(cd, pgm))]
   if (length(miss)) {
-    stop("NRV_summary: cannot build the reporting-group maps; missing:\n", paste(miss, collapse = "\n"),
-         call. = FALSE)
+    stop("NRV_summary: cannot ", what, "; missing:\n", paste(miss, collapse = "\n"), call. = FALSE)
   }
-  out <- file.path(outRoot, basename(dirname(vtm)), basename(vtm))
+  list(cd = cd, pgm = pgm)
+}
+
+## Forest / non-forest maps (`<outRoot>/<rep>/forestMap_year<YYYY>.tif`, the `<rep>/<prefix>_year<YYYY>`
+## tail nrvtools labels its results from) from the cohorts saved beside each vegetation-type map `vtm`
+## (nrvtools::forest_nonforest_map(): non-forest is a biomass-weighted age below `ageThreshold`, or no
+## cohorts; outside `studyArea` is NA). `outRoot` is cleared first. Returns the new paths in the order of `vtm`.
+.buildForestMaps <- function(vtm, outRoot, ageThreshold, studyArea) {
+  files <- .cohortFilesOf(vtm, "build the forest maps")
+  out <- file.path(outRoot, basename(dirname(vtm)), sub("^vegTypeMap", "forestMap", basename(vtm)))
   unlink(outRoot, recursive = TRUE)
   for (i in seq_along(vtm)) {
-    m <- .reportingVegTypeMap(qs2::qs_read(cd[i]), terra::rast(pgm[i]), grp, colors,
-                              vegLeadingProportion, mixedType)
+    m <- nrvtools::forest_nonforest_map(qs2::qs_read(files$cd[i]), terra::rast(files$pgm[i]),
+                                        ageThreshold = ageThreshold, studyArea = studyArea)
     dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
-    terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## a few classes; keeps the colour table
+    terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## 0, 1; keeps the colour table
   }
   out
 }
@@ -788,6 +841,14 @@ InitMulti <- function(sim) {
     )
   }
   invisible(events)
+}
+
+## `landscapeMetrics` is one of the two sets the 'lm' event knows; anything else would run the default one.
+.checkLandscapeMetrics <- function(x) {
+  if (!identical(x, "default") && !identical(x, "fragmentation")) {
+    stop("landscapeMetrics must be 'default' or 'fragmentation', not ", deparse(x), ".", call. = FALSE)
+  }
+  invisible(x)
 }
 
 .ppRoot <- function(sim) {
@@ -1067,8 +1128,10 @@ InitMulti <- function(sim) {
 
 ## build landscape metric envelopes from vegetation type maps (VTMs)
 landscapeMetrics <- function(sim) {
-  fvtm0 <- mod$fvtm0 ## current-conditions VTM = the saved year-0 state (see InitMulti)
-  fvtm <- mod$vtm
+  fragmentation <- identical(P(sim)$landscapeMetrics, "fragmentation")
+  ## current-conditions map = the saved year-0 state (see InitMulti)
+  fvtm0 <- if (fragmentation) mod$fnf0 else mod$fvtm0
+  fvtm <- if (fragmentation) mod$fnf else mod$vtm
   studyAreaReporting <- sf::st_as_sf(sim$studyAreaReporting)
 
   funList <- default_landscape_metrics() ## TODO: pass this further up via parameter funList_lm
@@ -1106,6 +1169,15 @@ landscapeMetrics <- function(sim) {
 
       ## raw per-replicate landscape metrics, Cached on the map file(s) it reads.
       lmRaw <- function(vtm) {
+        if (fragmentation) {
+          return(Cache(
+            nrvtools::nrv_forest_edge_density,
+            fnf = vtm,
+            summaryPolys = rptPoly,
+            polyCol = rptPolyCol,
+            .cacheExtra = file.info(vtm)[, c("size", "mtime")]
+          ))
+        }
         Cache(
           nrv_metrics_landscape,
           summaryPolys = rptPoly,
@@ -2215,7 +2287,7 @@ plotFun <- function(sim) {
   ai = "Aggregation index", area = "Patch area", area_cv = "Patch area CV", area_mn = "Mean patch area",
   area_sd = "Patch area SD", ca = "Class area", cohesion = "Patch cohesion index",
   condent = "Conditional entropy", core_cv = "Core area CV", core_mn = "Mean core area",
-  core_sd = "Core area SD", ed = "Edge density", enn = "Euclidean nearest-neighbour distance",
+  core_sd = "Core area SD", ed = "Edge density", forest_ed = "Forest edge density (m/ha)", enn = "Euclidean nearest-neighbour distance",
   enn_cv = "Nearest-neighbour distance CV", enn_mn = "Mean nearest-neighbour distance",
   enn_sd = "Nearest-neighbour distance SD", iji = "Interspersion-juxtaposition index",
   sam_mdn = "Median stand age", ## patchAges(): the median stand age of each patch

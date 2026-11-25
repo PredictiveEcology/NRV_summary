@@ -97,6 +97,18 @@ The groups' colours come from the optional input `sppColorVectReporting`. With
 `sppEquivColReporting = NA` (the default), the analyses read the species-level maps the simulation
 saved.
 
+### Fragmentation: forest edge density
+
+With `landscapeMetrics = "fragmentation"` the `lm` event reports one landscape metric, forest edge
+density (m of forest edge per ha), instead of the default ten. In `mode = "multi"` it is computed on
+forest / non-forest maps built by `nrvtools::forest_nonforest_map()` from the saved `cohortData` and
+`pixelGroupMap` of each summary year and of the current condition, and written under
+`postprocess/_forestMaps/`. A pixel is non-forest if its biomass-weighted stand age is below
+`fragmentationAgeThreshold` (20 years by default), or it has no cohorts; every other pixel of the
+reporting area is forest. The current condition leaves out urban pixels, as for the default metrics.
+The metric's rows are in `lm_nrvComparison.csv`, `nrvInside.csv` and the figures, as for any other
+landscape metric. With `landscapeMetrics = "default"` (the default) nothing changes.
+
 ### Events
 
 In `mode = "multi"` the postprocessing events selected via the `postprocessEvents`

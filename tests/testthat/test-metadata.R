@@ -51,7 +51,7 @@ test_that("parameters are the expected names", {
     c(
       ".plotInitialTime", ".plotInterval", ".plots", ".seed", ".studyAreaName", ".useCache",
       "ageClassCutOffs", "ageClasses", "ageClassMaxAge", "autocorrMaxLag", "bigTreedQuantile", "ccStandAgeSource",
-      "mixedType", "mode", "nationalReportingLayers", "nationalReportingLayersPath", "nrvWindow", "patchDirections",
+      "fragmentationAgeThreshold", "landscapeMetrics", "mixedType", "mode", "nationalReportingLayers", "nationalReportingLayersPath", "nrvWindow", "patchDirections",
       "plotWorkers", "postprocessEvents", "recentFireYears",
       "recordAnnualSeries", "reps", "reuseAggregates", "sieveThresh", "simTimes",
       "sofIndicators", "sppEquivCol", "sppEquivColReporting", "stabilityAlpha", "stabilityMinChange",
