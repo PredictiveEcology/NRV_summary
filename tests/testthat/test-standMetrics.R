@@ -424,12 +424,16 @@ test_that("a species with no biomass today or in the NRV years is not a test", {
   expect_identical(.nrvTested(cmp), c(FALSE, FALSE, TRUE, TRUE))
 })
 
-test_that("cover types are the group of the leading species; Mixed and unknown codes stay", {
-  eq <- topFixtureEquiv()
-  expect_identical(.coverTypes(c("Pice_mar", "Popu_tre", "Mixed", NA), eq, "LandR", "Type"),
-                   c("Conifer", "Deciduous", "Mixed", NA))
-  ## codes that are reporting groups of another column
-  eq$Report <- c("Spruce", "Pine", "Aspen", "Birch", "Spruce")
-  expect_identical(.coverTypes(c("Pine", "Birch", "Mixed"), eq, c("LandR", "Report"), "Type"),
-                   c("Conifer", "Deciduous", "Mixed"))
+test_that("cover types are the group of the leading species; Mixed stays and an unknown code warns", {
+  map <- LandWebUtils::sppEquiv_groups(topFixtureEquiv(), "LandR", "Type")$map
+  expect_identical(.coverTypes(c("Pice_mar", "Popu_tre", "Mixed", NA), map), c("Conifer", "Deciduous", "Mixed", NA))
+  expect_warning(r <- .coverTypes(c("Pice_mar", "Zzzz_zzz"), map), "no group for vegetation type.*Zzzz_zzz")
+  expect_identical(r, c("Conifer", "Zzzz_zzz"))
+})
+
+test_that("one pixel-group lookup serves the biomass of a pixel and the share of a species", {
+  cd <- data.frame(pixelGroup = c(3L, 3L, 7L), speciesCode = c("A", "B", "A"), B = c(10, 30, 60))
+  expect_equal(.pixelB(c(3L, 7L, 9L, 3L), cd), c(40, 60, NA, 40))
+  ## pixels: two of group 3 (A 20, B 60), one of group 7 (A 60): A 80, B 60 of 140; group 0 and NA are no forest
+  expect_equal(.biomassShares(c(3L, 3L, 7L, 0L, NA), cd), c(A = 100 * 80 / 140, B = 100 * 60 / 140))
 })
