@@ -1039,8 +1039,10 @@ makeAnimation <- function(sim) {
   yrs <- yrs[ord]
 
   ## age-class reclassification + colours (RdYlGn young -> old, matching v2's brewer.pal).
-  ## `ageClassCutOffs` are the LOWER bound of each class (length == n); the final class
-  ## runs to +Inf so old stands are never dropped.
+  ## standAgeMap is rounded down to the decade (40 means 40-49 years), so here a class starts at its
+  ## cutoff (right = FALSE). The lw summaries bin integer time since fire with each cutoff in the class
+  ## below (40 is Young, 41 Immature; nrvtools:::.age_class_raster()); for decade values this is the
+  ## closest match. The final class runs to +Inf so old stands are never dropped.
   cutoffs <- P(sim)$ageClassCutOffs
   n <- length(cutoffs)
   ageClasses <- P(sim)$ageClasses[seq_len(n)]
