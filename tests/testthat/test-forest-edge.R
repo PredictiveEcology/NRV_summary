@@ -1,14 +1,11 @@
 ## landscapeMetrics = "fragmentation" (2.0.0.9044): the 'lm' event reports one metric, forest edge density,
-## from forest / non-forest maps built from the saved cohorts; its rows travel the path of every other
+## from forest / non-forest maps built from the saved stand-age maps; its rows travel the path of every other
 ## landscape metric (envelope, lm_nrvComparison.csv, figures).
 
-## a 4 x 4 map of 10 m cells: left half old stand (pixel group 1), right half young (2): one 40 m edge over
-## 0.16 ha is 250 m/ha. In the current condition (2020) the right half is old too, so no edge there.
-fragCohorts <- function() {
-  data.table::data.table(pixelGroup = 1:2, speciesCode = "Pice_mar", age = c(100L, 10L), B = 500L)
-}
-fragPGM <- function(right) {
-  terra::rast(matrix(rep(c(1L, 1L, right, right), 4), 4, 4, byrow = TRUE), crs = "EPSG:32611",
+## a 4 x 4 map of 10 m cells: left half old stand (100 years), right half `right` years: with 10, one 40 m edge
+## over 0.16 ha is 250 m/ha.
+fragAge <- function(right) {
+  terra::rast(matrix(rep(c(100, 100, right, right), 4), 4, 4, byrow = TRUE), crs = "EPSG:32611",
               extent = terra::ext(0, 40, 0, 40))
 }
 fragSquare <- function() {
@@ -17,18 +14,15 @@ fragSquare <- function() {
 }
 
 ## the files of one replicate under `root`, saved as a run does: the maps of 2020 (current condition) and of
-## each analysis year, with cohortData and pixelGroupMap beside the vegetation-type map
+## each analysis year; the stand-age maps are the ones the forest maps are made from
 fragFiles <- function(root, times = c(2720, 2820)) {
   d <- file.path(root, "rep1")
   dir.create(d, recursive = TRUE)
   for (yr in c(2020, times)) {
-    ## the placeholders: only the path of the vegetation-type and stand-age maps is used
-    for (nm in c("vegTypeMap", "standAgeMap")) {
-      terra::writeRaster(fragPGM(2L), file.path(d, sprintf("%s_year%04d.tif", nm, yr)), datatype = "INT1U")
-    }
-    qs2::qs_save(fragCohorts(), file.path(d, sprintf("cohortData_year%04d.qs2", yr)))
-    terra::writeRaster(fragPGM(if (yr == 2020) 1L else 2L), file.path(d, sprintf("pixelGroupMap_year%04d.tif", yr)),
-                       datatype = "INT4U")
+    ## the vegetation-type map is a placeholder: only its path is used
+    terra::writeRaster(fragAge(10), file.path(d, sprintf("vegTypeMap_year%04d.tif", yr)), datatype = "INT1U")
+    ## stand age in years: old everywhere today, the right half young in the simulated years
+    terra::writeRaster(fragAge(if (yr == 2020) 100 else 10), file.path(d, sprintf("standAgeMap_year%04d.tif", yr)))
   }
   data.table::data.table(file = list.files(d, full.names = TRUE), saveTime = max(times))
 }
@@ -57,20 +51,19 @@ test_that("landscapeMetrics defaults to the ten metrics, and only the two sets a
   expect_error(check("fragmetation"), "landscapeMetrics must be 'default' or 'fragmentation'")
 })
 
-test_that("the forest maps keep the <rep>/<prefix>_year<YYYY>.tif path nrvtools parses, and need the saved cohorts", {
+test_that("the forest maps keep the <rep>/<prefix>_year<YYYY>.tif path nrvtools parses", {
   root <- withr::local_tempdir()
   fragFiles(root)
-  vtm <- file.path(root, "rep1", sprintf("vegTypeMap_year%04d.tif", c(2020, 2720)))
-  out <- moduleFn(".buildForestMaps", new.env())(vtm, file.path(root, "pp", "_forestMaps"), 20, fragSquare())
+  sam <- file.path(root, "rep1", sprintf("standAgeMap_year%04d.tif", c(2020, 2720)))
+  build <- moduleFn(".buildForestMaps", new.env())
+  out <- build(sam, file.path(root, "pp", "_forestMaps"), 20, fragSquare())
   expect_identical(basename(out), sprintf("forestMap_year%04d.tif", c(2020, 2720)))
   expect_identical(basename(dirname(out)), c("rep1", "rep1"))
   expect_identical(as.vector(terra::values(terra::rast(out[[2]]))), rep(c(1, 1, 0, 0), 4))
   ## the threshold is the parameter's: with 5 years the 10-year stands are forest too
-  out5 <- moduleFn(".buildForestMaps", new.env())(vtm[2], file.path(root, "pp", "_f5"), 5, fragSquare())
+  out5 <- build(sam[2], file.path(root, "pp", "_f5"), 5, fragSquare())
   expect_identical(unique(as.vector(terra::values(terra::rast(out5)))), 1)
-  file.remove(file.path(root, "rep1", "cohortData_year2720.qs2"))
-  expect_error(moduleFn(".buildForestMaps", new.env())(vtm, file.path(root, "pp", "x"), 20, fragSquare()),
-               "cannot build the forest maps; missing:.*cohortData_year2720.qs2")
+  expect_error(build(file.path(root, "rep1", "vegTypeMap_year2020.tif"), file.path(root, "pp", "x"), 20, fragSquare()))
 })
 
 test_that("with landscapeMetrics = 'fragmentation' the lm event writes forest edge density", {
@@ -81,6 +74,7 @@ test_that("with landscapeMetrics = 'fragmentation' the lm event writes forest ed
   mod <- sim@.xData$.modObjs[[moduleName]]
   expect_identical(basename(mod$fnf0), "forestMap_year2020.tif")
   expect_identical(basename(mod$fnf), sprintf("forestMap_year%04d.tif", c(2720, 2820)))
+  expect_identical(basename(mod$sam), sprintf("standAgeMap_year%04d.tif", c(2720, 2820))) ## made from these
   expect_true(all(file.exists(c(mod$fnf0, mod$fnf))))
   ## the species-level maps are still what the other events read
   expect_match(basename(mod$vtm), "^vegTypeMap_year")

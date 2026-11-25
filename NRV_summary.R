@@ -161,13 +161,13 @@ defineModule(sim, list(
                           "points here); `NA` is `inputPath(sim)`.")),
     defineParameter("fragmentationAgeThreshold", "numeric", 20, 0, NA,
                     paste("(mode = 'multi') with `landscapeMetrics = \"fragmentation\"`: stands whose",
-                          "biomass-weighted age (years) is below this are non-forest, with the pixels that have",
-                          "no cohorts. Forest is every other pixel of the reporting area.")),
+                          "stand age (years, the stand-age maps of the stand outputs) is below this are non-forest, with",
+                          "the pixels that have no cohorts. Forest is every other pixel of the reporting area.")),
     defineParameter("landscapeMetrics", "character", "default", NA, NA,
                     paste("(mode = 'multi') the metrics of the 'lm' event: 'default' (nrvtools'",
                           "`default_landscape_metrics()`, on the vegetation-type maps) or 'fragmentation' (one",
                           "metric, forest edge density in m/ha, `nrvtools::nrv_forest_edge_density()`, on forest /",
-                          "non-forest maps made from the saved `cohortData` and `pixelGroupMap` by",
+                          "non-forest maps made from the saved stand-age maps by",
                           "`nrvtools::forest_nonforest_map()` with `fragmentationAgeThreshold`; the current",
                           "condition's urban pixels are left out as for 'default'). Its rows are those of any",
                           "other landscape metric in `lm_nrvComparison.csv`, the inside counts and the figures.")),
@@ -507,6 +507,7 @@ InitMulti <- function(sim) {
   ## pre-industrial landscape, the marker is today's, and that difference IS the land-conversion
   ## component of the departure.
   fvtm0src <- mod$fvtm0 ## the species-level year-0 map, before the urban mask (see below)
+  fsam0src <- mod$fsam0 ## and the year-0 stand-age map
   urbanMask <- NULL
   ccrep <- sim$LandTypeCC_reporting
   if (is.null(ccrep)) {
@@ -592,10 +593,10 @@ InitMulti <- function(sim) {
   mod$pgm <- grep("pixelGroupMap", cdpgm, value = TRUE)
 
   ## landscapeMetrics = "fragmentation": the 'lm' event reads forest / non-forest maps, built from the
-  ## cohorts beside the species-level maps, so before the reporting-group maps replace those paths. Year
-  ## 0 is the current condition, with the urban pixels left out as for the vegetation-type map above.
+  ## stand-age maps the stand outputs read (mod$sam, and year 0's, before the urban mask). Year 0 is the
+  ## current condition, with the urban pixels left out as for the vegetation-type map above.
   if (identical(P(sim)$landscapeMetrics, "fragmentation") && "lm" %in% tolower(P(sim)$postprocessEvents)) {
-    ff <- .buildForestMaps(c(fvtm0src, mod$vtm), file.path(.ppRoot(sim), "_forestMaps"),
+    ff <- .buildForestMaps(c(fsam0src, mod$sam), file.path(.ppRoot(sim), "_forestMaps"),
                            P(sim)$fragmentationAgeThreshold, sim$studyAreaReporting)
     mod$fnf <- ff[-1L]
     mod$fnf0 <- if (is.null(urbanMask)) {
@@ -762,11 +763,18 @@ InitMulti <- function(sim) {
 ## `<outRoot>/<rep>/vegTypeMap_year<YYYY>.tif`, keeping the `<rep>/<prefix>_year<YYYY>` tail nrvtools
 ## labels its results from; `outRoot` is cleared first. Returns the new paths in the order of `vtm`.
 .buildReportingVegTypeMaps <- function(vtm, outRoot, grp, colors, vegLeadingProportion, mixedType) {
-  files <- .cohortFilesOf(vtm, "build the reporting-group maps")
+  stopifnot(all(grepl("^vegTypeMap_year[0-9]+\\.tif$", basename(vtm))))
+  cd <- file.path(dirname(vtm), sub("^vegTypeMap(_year[0-9]+)\\.tif$", "cohortData\\1.qs2", basename(vtm)))
+  pgm <- file.path(dirname(vtm), sub("^vegTypeMap", "pixelGroupMap", basename(vtm)))
+  miss <- c(cd, pgm)[!file.exists(c(cd, pgm))]
+  if (length(miss)) {
+    stop("NRV_summary: cannot build the reporting-group maps; missing:\n", paste(miss, collapse = "\n"),
+         call. = FALSE)
+  }
   out <- file.path(outRoot, basename(dirname(vtm)), basename(vtm))
   unlink(outRoot, recursive = TRUE)
   for (i in seq_along(vtm)) {
-    m <- .reportingVegTypeMap(qs2::qs_read(files$cd[i]), terra::rast(files$pgm[i]), grp, colors,
+    m <- .reportingVegTypeMap(qs2::qs_read(cd[i]), terra::rast(pgm[i]), grp, colors,
                               vegLeadingProportion, mixedType)
     dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
     terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## a few classes; keeps the colour table
@@ -774,30 +782,18 @@ InitMulti <- function(sim) {
   out
 }
 
-## The `cohortData` and `pixelGroupMap` files saved beside each vegetation-type map `vtm`
-## (`<rep>/vegTypeMap_year<YYYY>.tif`), as list(cd, pgm); stops, naming `what`, if any is missing.
-.cohortFilesOf <- function(vtm, what) {
-  stopifnot(all(grepl("^vegTypeMap_year[0-9]+\\.tif$", basename(vtm))))
-  cd <- file.path(dirname(vtm), sub("^vegTypeMap(_year[0-9]+)\\.tif$", "cohortData\\1.qs2", basename(vtm)))
-  pgm <- file.path(dirname(vtm), sub("^vegTypeMap", "pixelGroupMap", basename(vtm)))
-  miss <- c(cd, pgm)[!file.exists(c(cd, pgm))]
-  if (length(miss)) {
-    stop("NRV_summary: cannot ", what, "; missing:\n", paste(miss, collapse = "\n"), call. = FALSE)
-  }
-  list(cd = cd, pgm = pgm)
-}
-
 ## Forest / non-forest maps (`<outRoot>/<rep>/forestMap_year<YYYY>.tif`, the `<rep>/<prefix>_year<YYYY>`
-## tail nrvtools labels its results from) from the cohorts saved beside each vegetation-type map `vtm`
-## (nrvtools::forest_nonforest_map(): non-forest is a biomass-weighted age below `ageThreshold`, or no
-## cohorts; outside `studyArea` is NA). `outRoot` is cleared first. Returns the new paths in the order of `vtm`.
-.buildForestMaps <- function(vtm, outRoot, ageThreshold, studyArea) {
-  files <- .cohortFilesOf(vtm, "build the forest maps")
-  out <- file.path(outRoot, basename(dirname(vtm)), sub("^vegTypeMap", "forestMap", basename(vtm)))
+## tail nrvtools labels its results from) from the stand-age maps `sam` (`<rep>/standAgeMap_year<YYYY>.tif`:
+## the biomass-weighted ages of LandR::standAgeMapGenerator() that the stand outputs use, and for the current
+## condition the `ccStandAgeSource` choice), by nrvtools::forest_nonforest_map(): non-forest is an age below
+## `ageThreshold`, or no cohorts; outside `studyArea` is NA. `outRoot` is cleared first. Returns the new paths
+## in the order of `sam`.
+.buildForestMaps <- function(sam, outRoot, ageThreshold, studyArea) {
+  stopifnot(all(grepl("^standAgeMap_year[0-9]+\\.tif$", basename(sam))))
+  out <- file.path(outRoot, basename(dirname(sam)), sub("^standAgeMap", "forestMap", basename(sam)))
   unlink(outRoot, recursive = TRUE)
-  for (i in seq_along(vtm)) {
-    m <- nrvtools::forest_nonforest_map(qs2::qs_read(files$cd[i]), terra::rast(files$pgm[i]),
-                                        ageThreshold = ageThreshold, studyArea = studyArea)
+  for (i in seq_along(sam)) {
+    m <- nrvtools::forest_nonforest_map(sam[i], ageThreshold = ageThreshold, studyArea = studyArea)
     dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
     terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## 0, 1; keeps the colour table
   }
