@@ -38,9 +38,7 @@ defineModule(sim, list(
     ## 0.3.4.9001, not 0.3.4.9000: summarize_nrv() takes the per-replicate values that the patch
     ## metric envelopes are built from and returns exact quartiles; nrv_metric_info() names the
     ## axes; the plot functions take captions.
-    ## 0.5.1.9001: forest_nonforest_map() (`landscapeMap = "forest"`) and its edge density's name in
-    ## nrv_metric_info().
-    "FOR-CAST/nrvtools@development (>= 0.5.1.9001)",
+    "FOR-CAST/nrvtools@development (>= 0.3.4.9003)",
     "FOR-CAST/fireregimetools@main (>= 0.1.0.9008)", ## fetch_nbac_polys(), as burnSummaries
     "PredictiveEcology/pemisc@development (>= 0.0.4.9016)",
     "PredictiveEcology/SpaDES.core@development (>= 3.2.1.9057)" ## dirnamesFromSet() (bare-number replicate folders), resolveSimYears(), padYears()
@@ -166,7 +164,7 @@ defineModule(sim, list(
     defineParameter("landscapeMap", "character", "vegType", NA, NA,
                     paste("(mode = 'multi') the map the 'lm' event's metrics are computed on: 'vegType' (the",
                           "vegetation-type maps) or 'forest' (forest / non-forest maps made from the saved stand-age",
-                          "maps by `nrvtools::forest_nonforest_map()` with `fragmentationAgeThreshold`; the current",
+                          "maps, non-forest being a stand age below `fragmentationAgeThreshold` or no cohorts; the current",
                           "condition's urban pixels are left out as for 'vegType'). On 'forest' only the forest class",
                           "(class 1) is reported, as a landscape metric named `forest_<metric>`: with",
                           "`landscapeMetricFuns = \"lsm_c_ed\"`, `forest_ed`, 'Forest edge density (m/ha)'. Its rows are",
@@ -787,19 +785,22 @@ InitMulti <- function(sim) {
 }
 
 ## Forest / non-forest maps (`<outRoot>/<rep>/forestMap_year<YYYY>.tif`, the `<rep>/<prefix>_year<YYYY>`
-## tail nrvtools labels its results from) from the stand-age maps `sam` (`<rep>/standAgeMap_year<YYYY>.tif`:
-## the biomass-weighted ages of LandR::standAgeMapGenerator() that the stand outputs use, and for the current
-## condition the `ccStandAgeSource` choice), by nrvtools::forest_nonforest_map(): non-forest is an age below
-## `ageThreshold`, or no cohorts; outside `studyArea` is NA. `outRoot` is cleared first. Returns the new paths
-## in the order of `sam`.
+## tail nrvtools labels its results from; 1 forest, 0 non-forest) from the stand-age maps `sam`
+## (`<rep>/standAgeMap_year<YYYY>.tif`: the biomass-weighted ages of LandR::standAgeMapGenerator() that the
+## stand outputs use, and for the current condition the `ccStandAgeSource` choice). Non-forest is an age
+## below `ageThreshold`, or no age (no cohorts) inside `studyArea`; outside it is NA. `outRoot` is cleared
+## first. Returns the new paths in the order of `sam`.
 .buildForestMaps <- function(sam, outRoot, ageThreshold, studyArea) {
   stopifnot(all(grepl("^standAgeMap_year[0-9]+\\.tif$", basename(sam))))
   out <- file.path(outRoot, basename(dirname(sam)), sub("^standAgeMap", "forestMap", basename(sam)))
   unlink(outRoot, recursive = TRUE)
+  area <- terra::vect(sf::st_as_sf(studyArea))
   for (i in seq_along(sam)) {
-    m <- nrvtools::forest_nonforest_map(sam[i], ageThreshold = ageThreshold, studyArea = studyArea)
+    age <- terra::rast(sam[i])
+    inside <- terra::rasterize(terra::project(area, age), age, field = 1)
+    m <- terra::mask(terra::ifel(is.na(age), 0, age >= ageThreshold), inside)
     dir.create(dirname(out[i]), recursive = TRUE, showWarnings = FALSE)
-    terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE) ## 0, 1; keeps the colour table
+    terra::writeRaster(m, out[i], datatype = "INT1U", overwrite = TRUE)
   }
   out
 }
@@ -1845,7 +1846,8 @@ makeAnimation <- function(sim) {
 ## The y title of a figure of metric `met`: its plain name and unit (nrvtools::nrv_metric_info()),
 ## for a patch-level metric with how a replicate's value comes from its patches.
 .metricTitle <- function(met, level) {
-  lab <- nrvtools::nrv_metric_info(met, level)$label
+  info <- nrvtools::nrv_metric_info(met, level)
+  lab <- if (is.na(info$name) && met %in% names(.metricNames)) .metricNames[[met]] else info$label ## e.g. forest_ed
   if (identical(level, "patch")) paste0(lab, ", mean over patches") else lab
 }
 

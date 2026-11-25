@@ -62,14 +62,14 @@ test_that("the forest maps keep the <rep>/<prefix>_year<YYYY>.tif path nrvtools 
   out <- build(sam, file.path(root, "pp", "_forestMaps"), 20, fragSquare())
   expect_identical(basename(out), sprintf("forestMap_year%04d.tif", c(2020, 2720)))
   expect_identical(basename(dirname(out)), c("rep1", "rep1"))
-  expect_identical(as.vector(terra::values(terra::rast(out[[2]]))), rep(c(1, 1, 0, 0), 4))
+  expect_equal(as.vector(terra::values(terra::rast(out[[2]]))), rep(c(1, 1, 0, 0), 4))
   ## the threshold is the parameter's: with 5 years the 10-year stands are forest too
   out5 <- build(sam[2], file.path(root, "pp", "_f5"), 5, fragSquare())
-  expect_identical(unique(as.vector(terra::values(terra::rast(out5)))), 1)
+  expect_equal(unique(as.vector(terra::values(terra::rast(out5)))), 1)
   expect_error(build(file.path(root, "rep1", "vegTypeMap_year2020.tif"), file.path(root, "pp", "x"), 20, fragSquare()))
 })
 
-test_that("with landscapeMetrics = 'fragmentation' the lm event writes forest edge density", {
+test_that("with landscapeMap = 'forest' the lm event writes forest edge density", {
   withr::local_package("SpaDES.core")
   withr::local_options(reproducible.useCache = TRUE)
   root <- withr::local_tempdir()
@@ -107,7 +107,7 @@ test_that("a polygon with cells but no forest has forest edge density 0, not a m
     data.frame(layer = 1L, level = "class", class = class, id = NA_integer_, metric = "ed", value = 250,
                rep = 1L, time = 0L, poly = poly)
   }
-  ## polygon A has forest; B has only non-forest (class 0); C has no cells (no rows at all)
+  ## polygon A has forest; B has only non-forest (class 0)
   raw <- list(lsm_c_ed = rbind(rows(c(0L, 1L), "A"), rows(0L, "B")))
   out <- moduleFn(".forestClassRows", new.env())(raw)[[1]]
   expect_equal(out$poly, c("A", "B"))
@@ -117,4 +117,50 @@ test_that("a polygon with cells but no forest has forest edge density 0, not a m
   ## a metric that is undefined without the class stays missing
   raw2 <- list(lsm_c_area_mn = transform(rows(0L, "B"), metric = "area_mn"))
   expect_equal(nrow(moduleFn(".forestClassRows", new.env())(raw2)[[1]]), 0L)
+})
+
+test_that("lsm_c_ed on the forest maps gives the forest edge length per hectare", {
+  root <- withr::local_tempdir()
+  build <- moduleFn(".buildForestMaps", new.env())
+  edgeDensity <- function(age, rep, time, polys = fragSquare()) {
+    f <- file.path(root, rep, sprintf("standAgeMap_year%04d.tif", time))
+    dir.create(dirname(f), showWarnings = FALSE)
+    terra::writeRaster(age, f)
+    fnf <- build(f, file.path(root, "pp", rep), 20, fragSquare())
+    raw <- nrvtools::nrv_metrics_landscape(polys, "Name", fnf, funList = list("lsm_c_ed"))
+    moduleFn(".forestClassRows", new.env())(raw)[[1]]
+  }
+  ## one 40 m edge over 0.16 ha is 250 m/ha
+  out <- edgeDensity(fragAge(10), "rep01", 0)
+  expect_equal(out$value, 250)
+  expect_equal(unique(out$metric), "forest_ed")
+  ## a pixel inside non-forest (40 m) and a strip on the map border (20 m above, 10 m right; the border is no
+  ## edge)
+  age <- terra::rast(matrix(c(10, 10, 10, 10,  10, 100, 10, 10,  10, 10, 10, 10,  100, 100, 10, 10), 4, 4,
+                            byrow = TRUE), crs = "EPSG:32611", extent = terra::ext(0, 40, 0, 40))
+  out <- edgeDensity(age, "rep02", 100)
+  expect_equal(out$value, 70 / 0.16)
+  expect_equal(c(out$rep, out$time), c(2L, 100L))
+  ## all forest: no edge; all non-forest: no forest class, so 0
+  expect_equal(edgeDensity(fragAge(100), "rep03", 0)$value, 0)
+  expect_equal(edgeDensity(terra::rast(fragAge(10), vals = 10), "rep04", 0)$value, 0)
+})
+
+test_that("a stand age below the threshold, or none inside the study area, is non-forest", {
+  root <- withr::local_tempdir()
+  age <- terra::rast(matrix(c(100, 20, 19, 100,  NA, rep(100, 11)), 4, 4, byrow = TRUE), crs = "EPSG:32611",
+                     extent = terra::ext(0, 40, 0, 40))
+  f <- file.path(root, "rep1", "standAgeMap_year0000.tif")
+  dir.create(dirname(f))
+  terra::writeRaster(age, f)
+  area <- sf::st_as_sf(terra::as.polygons(terra::ext(0, 30, 0, 40), crs = "EPSG:32611")) ## left three columns
+  out <- moduleFn(".buildForestMaps", new.env())(f, file.path(root, "pp"), 20, area)
+  ## 20 is forest, 19 is not, the fourth column is outside, and no age inside (row 2) is not
+  expect_equal(as.vector(terra::values(terra::rast(out)))[1:5], c(1, 1, 0, NA, 0))
+})
+
+test_that("forest edge density is named on the figures by the module", {
+  expect_identical(.metricLabel("forest_ed"), "Forest edge density (m/ha)")
+  expect_identical(moduleFn(".metricTitle", new.env())("forest_ed", "landscape"), "Forest edge density (m/ha)")
+  expect_identical(moduleFn(".metricTitle", new.env())("ed", "landscape"), "Edge density (m/ha)")
 })
