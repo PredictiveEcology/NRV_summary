@@ -18,7 +18,7 @@ defineModule(sim, list(
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
     "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9054)", ## leadingSpeciesProp(), leadingByPixelGroup()
-    "PredictiveEcology/LandWebUtils@development (>= 1.1.0)", ## sppEquiv_groups(), recode_cohorts(); nationalReportingLayers() exists from 1.1.0
+    "PredictiveEcology/LandWebUtils@development (>= 1.1.0.9001)", ## sppEquiv_groups(), nationalReportingLayers(), top_species() (LandWebUtils#14; raise to the post-#14 version after it merges)
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
     ## calculatePatchMetrics()/calculatePatchMetricsSeral()/nrv_metrics_landscape() on those with
@@ -188,6 +188,18 @@ defineModule(sim, list(
                           "before the leading type is decided. `LandR::vegTypeMapGenerator()` sums only",
                           "within a code, so relabelling the species-level maps would not give this.",
                           "`NA` (the default) analyses the species-level maps the simulation saved.")),
+    defineParameter("standGroupsCol", "character", "Type", NA, NA,
+                    paste("(stand-level `st` measures) column of `sim$sppEquiv` that groups the simulated species",
+                          "(`sppEquivCol`) into the forest cover types reported: the default `\"Type\"` gives",
+                          "`Conifer` and `Deciduous`, and `Mixed` is the mixedwood class of the vegetation-type map",
+                          "(`mixedType`, `vegLeadingProportion`). The cover measures `lead_<group>` are the share of",
+                          "the forested area each cover type leads: a pixel's leading species, from the",
+                          "vegetation-type map, mapped to its group.")),
+    defineParameter("standTopSpecies", "integer", 3L, NA, NA,
+                    paste("(stand-level `st` measures) the species measures `biomass_<species>` are each species'",
+                          "share of the total tree biomass of the forested area. Only the `standTopSpecies` species",
+                          "with the largest share in the current condition are kept (default 3); `NA` keeps every",
+                          "species.")),
     defineParameter("summaryInterval", "integer", 100L, NA, NA,
                     "simulation time interval at which to take 'snapshots' used for summary analyses."),
     defineParameter("summaryPeriod", "integer", c(start(sim), end(sim)), NA, NA,
@@ -2429,9 +2441,9 @@ plotFun <- function(sim) {
   nrv
 }
 
-## Whether each row of comparisons is a test of the current condition: a leading type that is 0 in the current condition
-## and in the NRV (it leads nowhere) is not. The one definition of the rule, for the figure, nrvInside.csv and readers.
-.nrvTested <- function(cmp) !(grepl("^lead_", cmp$metric) & cmp$current == 0 & cmp$hi == 0)
+## Whether each row of comparisons is a test of the current condition: a cover type that leads nowhere, or a species
+## with no biomass, that is 0 in the current condition and in the NRV is not. The one definition of the rule, for the figure, nrvInside.csv and readers.
+.nrvTested <- function(cmp) !((grepl("^lead_", cmp$metric) | .isBiomass(cmp$metric)) & cmp$current == 0 & cmp$hi == 0)
 
 ## Per polygon and analysis group, the tests (`tested` rows) of `cmp` (poly, group, position, tested) and how many fall
 ## inside the NRV range: poly, group, nTests, nInside, pctInside (100 * nInside / nTests). Sum nTests and nInside over
@@ -2826,7 +2838,9 @@ stabilityCheck <- function(sim) {
 
 ## One snapshot, from the values of the reporting-area pixels: `sam` stand age, `vtmCode` vegetation type code,
 ## `pgm` pixel group; `cohortData` (B in g/m2) and the pixel area in ha. Returns metric, value: age_<class>
-## (% of forested), forested (% of the area), biomassTg, lead_<code> (% of the forested pixels, as the annual series);
+## (% of forested), forested (% of the area), biomassTg, lead_<code> (% of the forested pixels, as the annual series;
+## `vtmCode` is the cover type of each pixel), biomass_<species> (% of the biomass of the forested pixels; none when
+## `cohortData` has no `speciesCode`);
 ## with `bigTreedB` (g/m2), bigOld (% of forested: in the oldest class with B at least `bigTreedB`); with `recentYears`,
 ## youngRecent (% of the area: forest younger than that); with `recentBurn` (a logical per pixel), burnedRecent (% of
 ## the area).
@@ -2836,11 +2850,13 @@ stabilityCheck <- function(sim) {
   ac <- cut(sam[forest], c(ageClassCutOffs, Inf), right = FALSE, labels = ageClasses)
   B <- .pixelB(pgm, cohortData)
   lead <- table(vtmCode[!is.na(vtmCode)])
+  bySpp <- .biomassShares(pgm[forest], cohortData)
   out <- data.frame(
-    metric = c(paste0("age_", ageClasses), "forested", "biomassTg", paste0("lead_", names(lead))),
+    metric = c(paste0("age_", ageClasses), "forested", "biomassTg", paste0("lead_", names(lead)),
+               if (length(bySpp)) paste0(.biomassPrefix, names(bySpp))),
     value = c(100 * as.numeric(table(ac)) / max(1, sum(forest)), 100 * mean(forest),
               sum(B, na.rm = TRUE) * 0.01 * pixelHa / 1e6, ## as .annualSeriesRow()
-              100 * as.numeric(lead) / max(1, sum(forest)))
+              100 * as.numeric(lead) / max(1, sum(forest)), unname(bySpp))
   )
   extra <- c(
     if (!is.na(bigTreedB)) c(bigOld = 100 * sum(forest & sam >= max(ageClassCutOffs) & B >= bigTreedB, na.rm = TRUE) /
@@ -2852,10 +2868,43 @@ stabilityCheck <- function(sim) {
   out
 }
 
+## The metric names of the species' shares of the biomass: biomass_<species code>
+.biomassPrefix <- "biomass_"
+.isBiomass <- function(metric) startsWith(metric, .biomassPrefix)
+
+## Where the pixels `pgm` and the cohorts of `cohortData` sit among its pixel groups (sorted once): `pixel` and `cohort`
+## are indices into them (NA for a pixel group with no cohort, for `pixel`), `n` their number.
+.pgLookup <- function(pgm, cohortData) {
+  pg <- sort(unique(cohortData$pixelGroup))
+  list(pixel = match(pgm, pg), cohort = match(cohortData$pixelGroup, pg), n = length(pg))
+}
+
+## The share (%) of the total biomass of pixels `pgm` (their pixel groups) that each species holds, named by species code
+## (cohorts' B is g/m2, so a pixel group counts once per pixel). Empty without `cohortData$speciesCode`.
+.biomassShares <- function(pgm, cohortData) {
+  if (!"speciesCode" %in% names(cohortData)) return(numeric(0))
+  l <- .pgLookup(pgm[!is.na(pgm) & pgm > 0], cohortData)
+  w <- tabulate(l$pixel, l$n)[l$cohort] * as.numeric(cohortData$B)
+  b <- c(tapply(w, as.character(cohortData$speciesCode), sum))
+  b <- b[!is.na(b)]
+  100 * b[order(names(b))] / max(sum(b), .Machine$double.eps)
+}
+
+## The cover type of each vegetation-type code: `map` (named by code, e.g. from LandWebUtils::sppEquiv_groups()$map) gives
+## its group; "Mixed" stays. A code in neither is left as it is, with a warning.
+.coverTypes <- function(vtmCode, map) {
+  unmapped <- setdiff(unique(vtmCode[!is.na(vtmCode)]), c(names(map), "Mixed"))
+  if (length(unmapped)) {
+    warning("NRV_summary: no group for vegetation type(s) ", paste(unmapped, collapse = ", "),
+            "; their cover type is the code itself.", call. = FALSE)
+  }
+  ifelse(vtmCode %in% names(map), map[vtmCode], vtmCode)
+}
+
 ## The biomass (g/m2) of each pixel, from its pixel group's cohorts; NA for a pixel group with none
 .pixelB <- function(pgm, cohortData) {
-  bPG <- rowsum(as.numeric(cohortData$B), cohortData$pixelGroup)
-  bPG[match(pgm, as.integer(rownames(bPG)))]
+  l <- .pgLookup(pgm, cohortData)
+  as.vector(rowsum(as.numeric(cohortData$B), l$cohort))[l$pixel]
 }
 
 ## The biomass (g/m2) at quantile `q` of the forest pixels of age `oldAge` or more; NA when there are none
@@ -2892,13 +2941,14 @@ stabilityCheck <- function(sim) {
   out[order(out$rep, out$time, out$metric), ]
 }
 
-.leadingYlab <- "Share of the forested area (%)" ## the y title of the leading-type figures
+.leadingYlab <- "Share of the forested area (%)" ## the y title of the cover-type figures
+.biomassYlab <- "Share of the tree biomass (%)" ## the y title of the species figures
 .standFigSize <- list(width = 9, height = 5, units = "in") ## the size of a stand-level figure
 
 ## The class a stand-level metric is about, for a legend where the axis says what is measured: the age class,
 ## the leading type (by `sppEquiv`'s EN_generic_full when it has one), or the measure itself.
 .standClass <- function(metric, sppEquiv = NULL, sppEquivCol = "LandR") {
-  code <- sub("^lead_", "", metric)
+  code <- sub(paste0("^(lead_|", .biomassPrefix, ")"), "", metric)
   sp <- if (!is.null(sppEquiv) && "EN_generic_full" %in% names(sppEquiv)) {
     sppEquiv[["EN_generic_full"]][match(code, sppEquiv[[sppEquivCol]])]
   } else rep(NA_character_, length(code))
@@ -2920,7 +2970,7 @@ stabilityCheck <- function(sim) {
   ifelse(metric == "youngRecent", sprintf("Forest younger than %d years, share of the area (%%)", recentYears),
   ifelse(metric == "burnedRecent", sprintf("Burned in the last %d years, share of the area (%%)", recentYears),
   ifelse(grepl("^age_", metric), paste0(cls, " forest, share of forested area (%)"),
-         paste0(cls, " leading, share of forested area (%)")))))))
+  ifelse(.isBiomass(metric), paste0(cls, ", share of biomass (%)"), cls)))))))
 }
 
 ## The State of the Forest indicators a comparison row speaks to: the six that "Missing Indicators Brief:
@@ -2986,16 +3036,16 @@ stabilityCheck <- function(sim) {
     ggplot2::theme(legend.position = if (nClass > 1L || byPosition) "right" else "none")
 }
 
-## The data of one figure per leading type (`lead_*` metrics that lead somewhere), for `.standSeriesPanels()`: the
+## The data of one figure per leading type (`lead_*` and `biomass_*` metrics that are above 0 somewhere), for `.standSeriesPanels()`: the
 ## replicates' series, the current condition with its `position` from `cmp` (.nrvComparison() rows), named by metric.
 .speciesFigData <- function(series, ccRows, cmp, period, sa, sppEquiv = NULL, sppEquivCol = "LandR") {
   leadMax <- tapply(series$value, series$metric, max)
-  m <- names(leadMax)[grepl("^lead_", names(leadMax)) & leadMax > 0]
+  m <- names(leadMax)[(grepl("^lead_", names(leadMax)) | .isBiomass(names(leadMax))) & leadMax > 0]
   ccRows$position <- cmp$position[match(ccRows$metric, cmp$metric)]
   stats::setNames(lapply(m, function(x) {
     list(series = series[series$metric == x, , drop = FALSE], cc = ccRows[ccRows$metric == x, , drop = FALSE],
-         period = period, ylab = .leadingYlab,
-         title = paste(sa, "-", .standClass(x, sppEquiv, sppEquivCol), "leading"))
+         period = period, ylab = if (.isBiomass(x)) .biomassYlab else .leadingYlab,
+         title = paste(sa, "-", .standClass(x, sppEquiv, sppEquivCol), if (.isBiomass(x)) "biomass share"))
   }), m)
 }
 
@@ -3013,8 +3063,13 @@ standMetrics <- function(sim) {
   zones <- .standZones(pgm0, sim$studyAreaReporting, mod$reportingPolygons[mod$standPolyNames], sa)
   saCells <- zones[[1L]]$cells
 
+  ## each vegetation-type code (a species, or a reporting group when `sppEquivColReporting` is set) to its cover type
+  coverMap <- unlist(lapply(stats::na.omit(c(P(sim)$sppEquivCol, P(sim)$sppEquivColReporting)), function(col) {
+    LandWebUtils::sppEquiv_groups(sim$sppEquiv, col, P(sim)$standGroupsCol)$map
+  }))
   read <- function(f) {
-    list(sam = terra::values(terra::rast(f$sam), mat = FALSE), vtm = .vtmCodes(terra::rast(f$vtm)),
+    list(sam = terra::values(terra::rast(f$sam), mat = FALSE),
+         vtm = .coverTypes(.vtmCodes(terra::rast(f$vtm)), coverMap),
          pgm = terra::values(terra::rast(f$pgm), mat = FALSE), cd = qs2::qs_read(f$cd))
   }
   cc0 <- read(cc)
@@ -3049,6 +3104,13 @@ standMetrics <- function(sim) {
   }))
   series$rep <- as.integer(sub("^\\D*", "", series$rep))
   ccRows <- rowsOf(cc, cc0, burnCC)
+  if (!is.na(P(sim)$standTopSpecies)) {
+    ## the species with most biomass in the current condition's reporting area; the others are dropped everywhere
+    ccSA <- ccRows[ccRows$layer == sa & ccRows$poly == sa & .isBiomass(ccRows$metric), ]
+    keep <- LandWebUtils::top_species(stats::setNames(ccSA$value, ccSA$metric), P(sim)$standTopSpecies)
+    series <- series[!.isBiomass(series$metric) | series$metric %in% keep, ]
+    ccRows <- ccRows[!.isBiomass(ccRows$metric) | ccRows$metric %in% keep, ]
+  }
 
   for (z in zones) {
     isSA <- identical(z$layer, sa) && identical(z$poly, sa)
@@ -3139,7 +3201,9 @@ standMetrics <- function(sim) {
     disturbance = list(m = c("burnedRecent", "youngRecent"), ylab = "Share of the area (%)",
                        what = paste("burned or younger than", recentYears, "years")),
     leading = list(m = names(leadMax)[grepl("^lead_", names(leadMax)) & leadMax >= 0.5],
-                   ylab = .leadingYlab, what = "leading tree type"),
+                   ylab = .leadingYlab, what = "forest cover type"),
+    speciesBiomass = list(m = names(leadMax)[.isBiomass(names(leadMax)) & leadMax >= 0.5],
+                          ylab = .biomassYlab, what = "species share of biomass"),
     biomass = list(m = "biomassTg", ylab = "Total tree biomass (Tg)", what = "tree biomass")
   )
   for (g in names(groups)) {
@@ -3153,7 +3217,7 @@ standMetrics <- function(sim) {
     )
   }
 
-  ## one figure per leading type (the mixed class too): figures/st/<studyArea>/species/lead_<code>.png
+  ## one figure per cover type (the mixed class too) and species: figures/st/<studyArea>/species/{lead,biomass}_<code>.png
   if (isSA) {
     spp <- .speciesFigData(series, cc, cmp, .nrvPeriod(sim), poly, sim$sppEquiv, P(sim)$sppEquivCol)
     for (m in names(spp)) {

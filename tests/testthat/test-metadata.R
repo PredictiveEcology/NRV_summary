@@ -55,7 +55,7 @@ test_that("parameters are the expected names", {
       "plotWorkers", "postprocessEvents", "recentFireYears",
       "recordAnnualSeries", "reps", "reuseAggregates", "sieveThresh", "simTimes",
       "sofIndicators", "sppEquivCol", "sppEquivColReporting", "stabilityAlpha", "stabilityMinChange",
-      "stabilityWindow", "standOnlyLayers", "summaryInterval", "summaryPeriod", "timeSeriesTimes",
+      "stabilityWindow", "standGroupsCol", "standOnlyLayers", "standTopSpecies", "summaryInterval", "summaryPeriod", "timeSeriesTimes",
       "vegLeadingProportion"
 )
   )
@@ -65,5 +65,5 @@ test_that("parameters are the expected names", {
 test_that("reqdPkgs floors LandWebUtils, which an older build in a library would otherwise keep", {
   md <- SpaDES.core::moduleMetadata(module = moduleName, path = modulePath)
   pkgs <- unlist(md$reqdPkgs)
-  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0\\)$", pkgs))) ## nationalReportingLayers()
+  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0(\\.[0-9]+)?\\)$", pkgs))) ## nationalReportingLayers()
 })
