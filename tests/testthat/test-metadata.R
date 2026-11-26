@@ -65,5 +65,8 @@ test_that("parameters are the expected names", {
 test_that("reqdPkgs floors LandWebUtils, which an older build in a library would otherwise keep", {
   md <- SpaDES.core::moduleMetadata(module = moduleName, path = modulePath)
   pkgs <- unlist(md$reqdPkgs)
-  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0(\\.[0-9]+)?\\)$", pkgs))) ## nationalReportingLayers()
+  lwu <- grep("^PredictiveEcology/LandWebUtils@development \\(>= [0-9.]+\\)$", pkgs, value = TRUE)
+  expect_length(lwu, 1)
+  floor <- package_version(sub(".*\\(>= ([0-9.]+)\\)$", "\\1", lwu))
+  expect_true(floor >= "1.1.1") ## 1.1.1 is the first release with top_species() (LandWebUtils#14)
 })

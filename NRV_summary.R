@@ -18,7 +18,7 @@ defineModule(sim, list(
     "ggforce", "ggplot2", "gifski", "googledrive", "landscapemetrics", "qs2",
     "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9054)", ## leadingSpeciesProp(), leadingByPixelGroup()
-    "PredictiveEcology/LandWebUtils@development (>= 1.1.0.9001)", ## sppEquiv_groups(), nationalReportingLayers(), top_species() (LandWebUtils#14; raise to the post-#14 version after it merges)
+    "PredictiveEcology/LandWebUtils@development (>= 1.1.1)", ## sppEquiv_groups(), nationalReportingLayers(), top_species() (LandWebUtils#14, released in 1.1.1)
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
     ## calculatePatchMetrics()/calculatePatchMetricsSeral()/nrv_metrics_landscape() on those with
