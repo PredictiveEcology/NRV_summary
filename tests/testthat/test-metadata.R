@@ -65,5 +65,5 @@ test_that("parameters are the expected names", {
 test_that("reqdPkgs floors LandWebUtils, which an older build in a library would otherwise keep", {
   md <- SpaDES.core::moduleMetadata(module = moduleName, path = modulePath)
   pkgs <- unlist(md$reqdPkgs)
-  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0\\)$", pkgs))) ## nationalReportingLayers()
+  expect_true(any(grepl("^PredictiveEcology/LandWebUtils@development \\(>= 1\\.1\\.0(\\.[0-9]+)?\\)$", pkgs))) ## nationalReportingLayers()
 })
