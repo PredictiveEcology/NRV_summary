@@ -1,7 +1,7 @@
 ---
 title: "NRV_summary Manual"
-subtitle: "v.2.0.0.9044"
-date: "Last updated: 2026-11-25"
+subtitle: "v.2.0.0.9045"
+date: "Last updated: 2026-11-26"
 output:
   bookdown::html_document2:
     toc: true
@@ -410,6 +410,24 @@ Summary of user-visible parameters (Table \@ref(tab:moduleParams-NRV-summary)).
    <td style="text-align:left;"> NA </td>
    <td style="text-align:left;"> NA </td>
    <td style="text-align:left;"> (mode = 'multi') column of `sim$sppEquiv` that groups the simulated species (`sppEquivCol`) for reporting. When set, the vegetation-type maps that the 'lm', 'lw' and 'pm' analyses read, for the simulated years and for current conditions, are rebuilt from the saved `cohortData` and `pixelGroupMap` with each species recoded to its group, so biomass is summed within a group before the leading type is decided. `LandR::vegTypeMapGenerator()` sums only within a code, so relabelling the species-level maps would not give this. `NA` (the default) analyses the species-level maps the simulation saved. </td>
+   <td style="text-align:left;"> TRUE </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> standGroupsCol </td>
+   <td style="text-align:left;"> character </td>
+   <td style="text-align:left;"> Type </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> (stand-level `st` measures) column of `sim$sppEquiv` that groups the simulated species (`sppEquivCol`) into the forest cover types reported: the default `"Type"` gives `Conifer` and `Deciduous`, and `Mixed` is the mixedwood class of the vegetation-type map (`mixedType`, `vegLeadingProportion`). The cover measures `lead_&lt;group&gt;` are the share of the forested area each cover type leads: a pixel's leading species, from the vegetation-type map, mapped to its group. </td>
+   <td style="text-align:left;"> TRUE </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> standTopSpecies </td>
+   <td style="text-align:left;"> integer </td>
+   <td style="text-align:left;"> 3 </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> NA </td>
+   <td style="text-align:left;"> (stand-level `st` measures) the species measures `biomass_&lt;species&gt;` are each species' share of the total tree biomass of the forested area. Only the `standTopSpecies` species with the largest share in the current condition are kept (default 3); `NA` keeps every species. </td>
    <td style="text-align:left;"> TRUE </td>
   </tr>
   <tr>
