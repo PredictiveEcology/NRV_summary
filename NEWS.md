@@ -2,6 +2,8 @@ Known issues: <https://github.com/FOR-CAST/NRV_summary/issues>
 
 # NRV_summary (development version)
 
+- New parameter `userReportingLayers`: the user's own reporting polygons (a file, `SpatVector` or `sf`, with a `label` column naming the units), each clipped to `studyAreaReporting` and reported like the national layers, under the list's names.
+
 * `LandWebUtils` floor raised to 1.1.1, the release that contains `top_species()` (LandWebUtils#14).
 
 - Stand-level (`st`) measures: cover is conifer / deciduous / mixed, species are biomass shares. The cover rows `lead_<group>` (`lead_Conifer`, `lead_Deciduous`, `lead_Mixed`; labelled by the name alone) are the share of the forested area each cover type leads: a pixel's leading species from the vegetation-type map, mapped to its group in the new parameter `standGroupsCol` (default `"Type"`); `Mixed` is the map's mixedwood class. The per-species `lead_<species>` rows are gone. New `biomass_<species>` rows (", share of biomass (%)") are each species' share of the total tree biomass of the forested area, and the new parameter `standTopSpecies` (default 3) keeps only the species with the largest share in the current condition (`NA`: all). Species with no biomass now and in the NRV years are not tests (`tested`). Figures: one per cover type, one for the species' biomass shares, and one per species under `figures/st/<area>/species/`. Output change: `lead_<species>` files, rows and figures become `lead_<group>` and `biomass_<species>`. Requires LandWebUtils with `top_species()` (LandWebUtils#14; floor 1.1.0.9001 until it merges).

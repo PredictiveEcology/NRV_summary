@@ -19,6 +19,7 @@ defineModule(sim, list(
     "RColorBrewer", "reproducible", "sf", "terra", "tidyterra",
     "PredictiveEcology/LandR@development (>= 1.2.0.9054)", ## leadingSpeciesProp(), leadingByPixelGroup()
     "PredictiveEcology/LandWebUtils@development (>= 1.1.1)", ## sppEquiv_groups(), nationalReportingLayers(), top_species() (LandWebUtils#14, released in 1.1.1)
+    "FOR-CAST/spatialutils", ## prep_vector(), dissolve_by(): the user reporting layers, as buildReportingPolygons() does
     ## 0.2.10 floor, not 0.2.7: the LandWeb#118 tenure x sub-region crossings mint refCodes of the
     ## form <kind>_<slug> whose subregion names themselves contain "_", and nrvtools < 0.2.10 aborts
     ## calculatePatchMetrics()/calculatePatchMetricsSeral()/nrv_metrics_landscape() on those with
@@ -154,6 +155,13 @@ defineModule(sim, list(
                           "forest; with `sofIndicators`, csv/sof/Intact/intact_extent.csv gives its loss). Each is",
                           "clipped to `studyAreaReporting`, so a run reports its own pieces of a province or an",
                           "ecozone.")),
+    defineParameter("userReportingLayers", "list", list(), NA, NA,
+                    paste("(mode = 'multi') the user's own reporting layers, added to `reportingPolygons` and",
+                          "treated as the national layers are. A named list (the name is the layer's name in the",
+                          "outputs) of `list(x = , label = )`: `x` a vector file path, `SpatVector` or `sf`, and",
+                          "`label` the column naming the reporting units (features sharing a value are dissolved",
+                          "into one unit; `NULL` makes each feature its own unit). An entry may also be `x` alone.",
+                          "Each is clipped to `studyAreaReporting`; one that does not intersect it is skipped.")),
     defineParameter("nationalReportingLayersPath", "character", NA_character_, NA, NA,
                     paste("where the national layers are downloaded (once, and shared by every run that",
                           "points here); `NA` is `inputPath(sim)`.")),
@@ -2475,8 +2483,8 @@ plotFun <- function(sim) {
   cmp <- .nrvComparison(env, cc, .nrvPeriod(sim))
   if (isTRUE(P(sim)$sofIndicators)) cmp$sofIndicator <- .sofIndicator(cmp$metric, layer)
   utils::write.csv(cmp, f, row.names = FALSE)
-  ## the figure of every group and nrvInside.csv are of the reporting area's own layers, not the national ones
-  if (!layer %in% P(sim)$nationalReportingLayers) .recordComparison(kind, cmp, layer)
+  ## the figure of every group and nrvInside.csv are of the reporting area's own layers, not the national or user ones
+  if (!layer %in% c(P(sim)$nationalReportingLayers, names(P(sim)$userReportingLayers))) .recordComparison(kind, cmp, layer)
   mod$ppFiles <- c(mod$ppFiles, f)
   invisible()
 }
@@ -3237,24 +3245,61 @@ standMetrics <- function(sim) {
 }
 
 ## The national reporting layers asked for (`nationalReportingLayers`), from
-## `LandWebUtils::nationalReportingLayers()`, clipped to `studyAreaReporting` in its CRS, as `sf`, named by layer.
+## `LandWebUtils::nationalReportingLayers()`, and the user's (`userReportingLayers`), clipped to
+## `studyAreaReporting` in its CRS, as `sf`, named by layer.
 .nationalLayers <- function(sim) {
   want <- P(sim)$nationalReportingLayers
-  if (!length(want)) {
+  user <- P(sim)$userReportingLayers
+  if (!length(want) && !length(user)) {
     return(list())
   }
-  lyrs <- LandWebUtils::nationalReportingLayers()
-  unknown <- setdiff(want, lyrs$NAME_SHORT)
-  if (length(unknown)) {
-    stop("NRV_summary: unknown nationalReportingLayers ", paste(sQuote(unknown), collapse = ", "),
-         "; LandWebUtils::nationalReportingLayers() has ", paste(sQuote(lyrs$NAME_SHORT), collapse = ", "),
+  sar <- terra::vect(sf::st_as_sf(sim$studyAreaReporting))
+  rp <- list()
+  if (length(want)) {
+    lyrs <- LandWebUtils::nationalReportingLayers()
+    unknown <- setdiff(want, lyrs$NAME_SHORT)
+    if (length(unknown)) {
+      stop("NRV_summary: unknown nationalReportingLayers ", paste(sQuote(unknown), collapse = ", "),
+           "; LandWebUtils::nationalReportingLayers() has ", paste(sQuote(lyrs$NAME_SHORT), collapse = ", "),
+           call. = FALSE)
+    }
+    dest <- if (is.na(P(sim)$nationalReportingLayersPath)) inputPath(sim) else P(sim)$nationalReportingLayersPath
+    rp <- LandWebUtils::buildReportingPolygons(sar, dest, targetCRS = terra::crs(sar),
+                                               layers = lyrs[lyrs$NAME_SHORT %in% want, ])
+  }
+  lapply(c(rp, .userLayers(user, sar, taken = names(rp))), sf::st_as_sf)
+}
+
+## The user's reporting layers (`userReportingLayers`), each clipped to `sar` and transformed to its CRS by
+## `spatialutils::prep_vector()`, as `LandWebUtils::buildReportingPolygons()` does the national ones, labelled
+## `Name` and dissolved to one feature per unit. A layer with nothing inside `sar` is left out, with a message.
+.userLayers <- function(layers, sar, taken = character(0)) {
+  if (!length(layers)) {
+    return(list())
+  }
+  nms <- names(layers)
+  if (is.null(nms) || any(!nzchar(nms)) || anyDuplicated(nms) || any(nms %in% taken)) {
+    stop("NRV_summary: userReportingLayers must be a list with unique names, none a nationalReportingLayers name",
          call. = FALSE)
   }
-  sar <- terra::vect(sf::st_as_sf(sim$studyAreaReporting))
-  dest <- if (is.na(P(sim)$nationalReportingLayersPath)) inputPath(sim) else P(sim)$nationalReportingLayersPath
-  rp <- LandWebUtils::buildReportingPolygons(sar, dest, targetCRS = terra::crs(sar),
-                                             layers = lyrs[lyrs$NAME_SHORT %in% want, ])
-  lapply(rp, sf::st_as_sf)
+  out <- Map(function(lyr, nm) {
+    if (!is.list(lyr) || inherits(lyr, "sf")) lyr <- list(x = lyr)
+    x <- if (inherits(lyr$x, "sf")) terra::vect(lyr$x) else lyr$x
+    v <- spatialutils::prep_vector(x, sar, crs = terra::crs(sar))
+    if (!is.null(lyr$label) && !lyr$label %in% names(v)) {
+      stop("NRV_summary: userReportingLayers$", nm, " has no column ", sQuote(lyr$label), call. = FALSE)
+    }
+    if (nrow(v)) {
+      v$Name <- if (is.null(lyr$label)) as.character(seq_len(nrow(v))) else as.character(v[[lyr$label]][[1L]])
+      v <- spatialutils::dissolve_by(v[!is.na(v$Name), ], "Name", explode = FALSE)
+    }
+    if (!nrow(v)) {
+      message("NRV_summary: userReportingLayers$", nm, " does not intersect studyAreaReporting; skipped")
+      return(NULL)
+    }
+    v
+  }, layers, nms)
+  out[!vapply(out, is.null, logical(1))]
 }
 
 ## ---- annual landscape series and their autocorrelation ----------------------------------------------
