@@ -55,7 +55,7 @@ test_that("parameters are the expected names", {
       "plotWorkers", "postprocessEvents", "recentFireYears",
       "recordAnnualSeries", "reps", "reuseAggregates", "sieveThresh", "simTimes",
       "sofIndicators", "sppEquivCol", "sppEquivColReporting", "stabilityAlpha", "stabilityMinChange",
-      "stabilityWindow", "standGroupsCol", "standOnlyLayers", "standTopSpecies", "summaryInterval", "summaryPeriod", "timeSeriesTimes",
+      "stabilityWindow", "standGroupsCol", "standOnlyLayers", "standTopSpecies", "summaryInterval", "summaryPeriod", "timeSeriesTimes", "userReportingLayers",
       "vegLeadingProportion"
 )
   )
